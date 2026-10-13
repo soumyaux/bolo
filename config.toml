@@ -1,0 +1,63 @@
+[hotkey]
+# Hold this key to talk. Must differ from the Wispr Flow key.
+push_to_talk = "cmd_r"
+# Opens the "fix last dictation" window (step 12).
+fix_last = "<ctrl>+<alt>+f"
+
+[wispr]
+# When true and Wispr Flow is not running, also answer on wispr_key.
+takeover = true
+wispr_key = "fn"
+
+[audio]
+sample_rate = 16000
+# Clips shorter than this are treated as an accidental tap and dropped.
+min_seconds = 0.3
+max_seconds = 300
+# Silence the Mac's speakers while the key is held, then put the sound back.
+mute_while_recording = true
+
+[stt]
+# Tried in order. A failure, a 429 or a timeout moves to the next one.
+# "local" runs on this Mac: fast, no limit, no internet. "gemini" is more accurate but slow on the free tier.
+order = ["local", "gemini"]
+# Gemini's free tier took 8 to 20 s per clip when measured on 2026-10-14; lower this once a fast provider is first.
+timeout_seconds = 30
+
+[stt.gemini]
+model = "gemini-3.5-transcribe"
+# Empty = auto-detect, which allows English and Hindi in one sentence.
+language_codes = []
+smart_mode = true
+
+[stt.groq]
+model = "whisper-large-v3"
+
+[stt.local]
+model = "mlx-community/whisper-large-v3-turbo"
+# "en" is the safest for mostly-English speech. Empty = auto-detect per clip.
+language = "en"
+# The model uses about 2 GB of memory while loaded; it is freed after this much idle time.
+unload_after_idle_minutes = 10
+
+[cleanup]
+enabled = true
+# Runs only when the text has a self-correction, spoken steps, Hindi script, or is long.
+provider = "gemini"
+model = "gemini-3.5-flash-lite"
+# If the pass takes longer than this, the locally tidied text is pasted instead.
+timeout_seconds = 4
+# Spoken steps become a numbered list, spoken items become bullets.
+lists = true
+# Clean transcripts at or under this many words skip the LLM pass.
+fast_path_max_words = 40
+
+[dictionary]
+# Spelled exactly as written here. Add your own names and technical terms.
+terms = [
+    "Claude Code",
+    "Wispr Flow",
+    "Hinglish",
+    "pyproject.toml",
+    "uv",
+]

@@ -1,0 +1,20 @@
+[project]
+name = "flow-backup"
+version = "0.1.0"
+description = "Hold a key, speak, release: cleaned-up text is pasted into the focused app."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "sounddevice>=0.5",
+    "soundfile>=0.12",
+    "numpy>=2.0",
+    "httpx>=0.27",
+    "pynput>=1.7.7",
+    "rumps>=0.4",
+    "python-dotenv>=1.0",
+    "mlx-whisper>=0.4",
+]
+
+[tool.uv]
+package = false
+# Use the macOS keychain certificates (this network's TLS issuer is not in uv's bundled list).
+native-tls = true
