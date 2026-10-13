@@ -24,13 +24,15 @@ class LocalWhisper:
     def __init__(
         self,
         model: str = "mlx-community/whisper-large-v3-turbo",
-        language: str = "en",
+        languages: list[str] | None = None,
         unload_after_idle_minutes: float = 10,
     ):
         self.model = model
-        self.language = language or None
+        # One language is used as given. With several, each clip uses the one that fits best.
+        self.languages = languages or ["en"]
         self._idle_seconds = unload_after_idle_minutes * 60
         self._loaded = False
+        self.last_language = ""
         self._idle_timer: threading.Timer | None = None
         # MLX keeps its GPU state per thread, so loading and every transcription share one thread.
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="whisper")
@@ -52,7 +54,7 @@ class LocalWhisper:
         mlx_whisper.transcribe(
             np.zeros(16000, dtype=np.float32),
             path_or_hf_repo=self.model,
-            language=self.language,
+            language=self.languages[0],
             verbose=None,
         )
         self._loaded = True
@@ -77,15 +79,29 @@ class LocalWhisper:
             self._idle_timer.daemon = True
             self._idle_timer.start()
 
+    def _pick_language(self, samples: np.ndarray) -> str:
+        """Chooses among the configured languages only, so an accent is never taken for a third one."""
+        if len(self.languages) == 1:
+            return self.languages[0]
+        import mlx.core as mx
+        from mlx_whisper.audio import N_FRAMES, N_SAMPLES, log_mel_spectrogram, pad_or_trim
+        from mlx_whisper.transcribe import ModelHolder
+
+        model = ModelHolder.get_model(self.model, mx.float16)
+        mel = log_mel_spectrogram(samples, n_mels=model.dims.n_mels, padding=N_SAMPLES)
+        _, probs = model.detect_language(pad_or_trim(mel, N_FRAMES, axis=-2).astype(mx.float16))
+        return max(self.languages, key=lambda code: probs.get(code, 0.0))
+
     def _run(self, flac: bytes, vocabulary: list[str] | None) -> str:
         import mlx_whisper
 
         self._load()
         samples, _ = sf.read(io.BytesIO(flac), dtype="float32")
+        self.last_language = self._pick_language(samples)
         result = mlx_whisper.transcribe(
             samples,
             path_or_hf_repo=self.model,
-            language=self.language,
+            language=self.last_language,
             # Whisper spells words the way they appear in this text.
             initial_prompt="Glossary: " + ", ".join(vocabulary) + "." if vocabulary else None,
             condition_on_previous_text=False,

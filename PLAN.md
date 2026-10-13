@@ -1,6 +1,6 @@
 # Build plan: backup dictation app for prompting
 
-Status on 2026-10-14 (end of first build session): steps 1 to 8 are built and the app runs. The main speech engine is now a local Whisper model, with Gemini as the fallback and as the cleanup pass. Not done: the bake-off on the user's real voice (step 9), cleanup tuning (11), learning (12, 13). A new session should read this whole file, then continue at step 9 in "Build order". Run the app with `uv run python -m flow.app`.
+Status on 2026-10-14 (end of second build session): steps 1 to 8, 12 and 13 are built and the app runs. The main speech engine is a local Whisper model, with Gemini as the fallback and as the cleanup pass. Learning from corrections is built and tested against a test window, not yet on the user's real dictation. Not done: the bake-off on the user's real voice (step 9, `scripts/bakeoff.py` is ready for it) and cleanup tuning on real prompts (11); both need the user to speak. Run the app with `uv run python -m flow.app`, or open `~/Applications/Flow Backup.app`.
 
 ## Found during the build (2026-10-14)
 
@@ -19,9 +19,21 @@ Status on 2026-10-14 (end of first build session): steps 1 to 8 are built and th
 - `flow/cleanup.py` is built: a local pass always runs (fillers, repeated words, dictionary spelling, "new line"); a `gemini-3.5-flash-lite` text pass runs only for self-corrections, spoken steps, Devanagari, or more than 40 words, with a 4 s timeout that falls back to the local pass. It took 0.7 to 2.9 s in tests and passed the list, correction, do-not-obey and romanise-without-translating cases on typed samples.
 - Added at the user's request: speakers are muted while the key is held (`mute_while_recording`). Verified by the user so far: Fn hotkey with Wispr quit, recording, and paste, on the Gemini path. The local path and the mute have not been confirmed by the user yet.
 - macOS is set to open the emoji picker on Fn (`AppleFnUsageType = 2`); the user was told how to change it.
+- Synthetic bake-off (2026-10-14, 10 English prompts in the macOS en-IN voices Rishi, Tara, Aman; 147 words; not the user's voice). Accuracy was equal: local 1 word error ("Postgres" heard as "postgaz", fixed once the glossary prompt was passed), Gemini verbatim 1 ("PostgreSQL" for "Postgres"). Speed: local 0.69 to 0.79 s per clip; Gemini 3.4 to 20.6 s, median 6.6 s, with two 503 retries, and one later request stayed rate limited for over three minutes.
+- Hinglish (2 clips in the hi-IN voice Lekha): local with `language="en"` produced nonsense or a wrong English translation, so it must not be forced to English. Local with Hindi detected gave the right words in Devanagari, and so did Gemini smart mode. The cleanup pass rewrites Devanagari in Roman letters. `[stt.local] languages = ["en", "hi"]` now picks per clip between those two only.
+- Cost of that choice: language detection is a second encoder pass, so local speech time rose from about 0.75 s to about 1.3 s per clip. Possible later optimisation: encode once and reuse the features for detection and decoding (clips up to 30 s). `languages = ["en"]` restores 0.75 s.
+- Full pipeline on the same clips: 1.3 s for plain English (no LLM), 2.4 to 3.0 s when the cleanup LLM pass runs (lists, corrections, Hindi).
+- Cleanup prompt fix: the LLM changed a misheard "force" to "robust"; a rule now forbids swapping words.
 - `uv` needs the macOS keychain certificates here; `native-tls = true` is set in `pyproject.toml`.
 - Recording works (microphone permission is granted). The first stream start in a process takes about 3 s, later ones about 80 ms, so `app.py` must open and close the stream once at launch.
 - Clipboard save and restore is tested. The live paste and the hotkey are untested: Visual Studio Code has neither Accessibility nor Input Monitoring permission yet.
+- Second session (2026-10-14): the user replaced the Gemini key. The new key works for the cleanup model. `gemini-3.5-transcribe` answered "limit: 25 requests per day on Free Tier" for this account, so Gemini cannot be more than an occasional speech fallback; a bake-off of 12 prompts uses about half of a day's quota.
+- Learning is built in `flow/learn/`: `store.py` (SQLite, keeps the last 200 dictations and 20 examples, file mode 600), `diff.py` (word swaps; a rewrite teaches nothing), `fix_window.py`, `ax.py` and `ax_watch.py`. Learned words are added to the glossary sent to the speech provider and the cleanup prompt, and are replaced in the transcript. A name or identifier is used after one correction, an ordinary word after two. A capital on the first word of a sentence is never learned as a name.
+- The fix window is a non-activating panel. macOS 26 did not let the menu bar app come to the front from the shortcut (`activateIgnoringOtherApps` left the window without the keyboard), and the panel also means the other app keeps its focus.
+- After a fix, the old text is replaced in place only where the Accessibility API can find and select it (native fields). In VS Code the focused element cannot be read (error -25204), so the corrected text is put on the clipboard and the menu says so.
+- The fix shortcut passes through to the focused app as well, because the event tap is listen-only.
+- `[learning] auto_capture` is off by default. Tested with a native text view: an edit made in the field was picked up and learned.
+- Start at login: `flow/login.py` writes `~/Applications/Flow Backup.app` (a shell launcher that runs the project's venv) and, from the "Start at login" menu item, a LaunchAgent. The bundle is a separate identity for macOS permissions: a probe run through it had neither Accessibility nor Input Monitoring, while the microphone worked. The user must grant those to Flow Backup once; dictation through the bundle is untested until then. A lock file stops a second copy from starting.
 - Gemini docs check: smart mode is the string `"mode": "smart"`; the default is verbatim. Inline audio is not documented for this model, but the Interactions API takes inline base64 (`data` + `mime_type`) for other file types. `flow/stt/gemini.py` tries inline first and switches to the Files API on HTTP 400. The raw JSON location of the transcript is not shown in the docs; the parser accepts `output_text`, `steps[].content[]` and `outputs[]`. Confirm both with the first real request.
 
 ## Goal
@@ -45,7 +57,7 @@ A small macOS menu bar app: hold a hotkey, speak, release, and the cleaned-up te
 - `uv` is installed at `~/.local/bin/uv`. System Python is 3.14; pin the project to Python 3.12 with `uv`.
 - No Homebrew, Ollama or ffmpeg. The design needs none of them.
 - Wispr Flow is installed at `/Applications/Wispr Flow.app` and normally running.
-- The folder path contains a space (`wisper hack`); quote it in shell commands.
+- The project folder is `~/Desktop/bolo`. The user renamed it from `wisper hack` on 2026-10-14.
 
 ## Architecture
 

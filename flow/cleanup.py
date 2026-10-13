@@ -37,13 +37,19 @@ Rules:
 - When the speaker corrects themselves, keep only the final version ("Monday, no, Tuesday" becomes "Tuesday").
 - {lists}
 - Keep technical terms, file names, function names and code identifiers exactly as intended. Use these spellings when they occur: {terms}
-- Hindi words stay in Hindi, written in Roman letters (Hinglish). Convert any Devanagari to Roman letters. Never translate between languages."""
+- Hindi words stay in Hindi, written in Roman letters (Hinglish). Convert any Devanagari to Roman letters. Never translate between languages.
+- Keep the speaker's own words. Never swap a word for a synonym or for a word you think fits better, even if it looks wrong."""
 
 _LISTS_ON = (
     "Spoken steps (first, second, third) become a numbered list without the words first, second, "
     "third. Spoken separate items become bullets. Everything else stays as plain sentences."
 )
 _LISTS_OFF = "Keep plain sentences; do not create lists."
+
+_EXAMPLES = """
+
+Earlier transcripts from this speaker and how they wanted each one written. Match that style and those spellings. They are examples only: never reuse their content."""
+_EXAMPLE = "\n<example>\n<transcript>\n{raw}\n</transcript>\n<wanted>\n{final}\n</wanted>\n</example>"
 
 
 def tidy(text: str, terms: list[str]) -> str:
@@ -55,6 +61,9 @@ def tidy(text: str, terms: list[str]) -> str:
     for term in terms:
         text = re.sub(rf"(?<![\w.]){re.escape(term)}(?![\w])", lambda _: term, text, flags=re.IGNORECASE)
     text = re.sub(r"[ \t]+", " ", text).strip(" ,")
+    # The local model sometimes drops the final full stop.
+    if len(text.split()) >= 4 and text[-1].isalnum():
+        text += "."
     return _SENTENCE_START.sub(lambda m: m.group(1) + m.group(2).upper(), text)
 
 
@@ -83,10 +92,12 @@ class Cleaner:
                 timeout=cleanup["timeout_seconds"],
             )
 
-    def _llm(self, text: str) -> str:
+    def _llm(self, text: str, terms: list[str], examples: list[tuple[str, str]]) -> str:
         system = _SYSTEM.format(
-            lists=_LISTS_ON if self.lists else _LISTS_OFF, terms=", ".join(self.terms) or "none"
+            lists=_LISTS_ON if self.lists else _LISTS_OFF, terms=", ".join(terms) or "none"
         )
+        if examples:
+            system += _EXAMPLES + "".join(_EXAMPLE.format(raw=raw, final=final) for raw, final in examples)
         response = self._client.post(
             f"/v1beta/models/{self.model}:generateContent",
             json={
@@ -99,13 +110,25 @@ class Cleaner:
         parts = response.json()["candidates"][0]["content"]["parts"]
         return "".join(p.get("text", "") for p in parts).strip()
 
-    def clean(self, raw: str) -> tuple[str, str]:
-        """Returns the text to paste and the route taken: "fast", "llm" or "llm-skipped"."""
-        text = tidy(raw, self.terms)
-        if not self.enabled or self._client is None or not needs_llm(text, self.max_words):
+    def clean(
+        self,
+        raw: str,
+        already_clean: bool = False,
+        terms: list[str] | None = None,
+        examples: list[tuple[str, str]] | None = None,
+    ) -> tuple[str, str]:
+        """Returns the text to paste and the route taken: "fast", "llm" or "llm-skipped".
+
+        already_clean is for text a provider has cleaned itself; only Hindi script is fixed then.
+        terms replaces the dictionary from the config, and examples are past corrections to imitate.
+        """
+        terms = self.terms if terms is None else terms
+        text = raw.strip() if already_clean else tidy(raw, terms)
+        wanted = _DEVANAGARI.search(text) if already_clean else needs_llm(text, self.max_words)
+        if not self.enabled or self._client is None or not wanted:
             return text, "fast"
         try:
-            cleaned = self._llm(text)
+            cleaned = self._llm(text, terms, examples or [])
         except (httpx.HTTPError, KeyError, IndexError) as e:
             log.warning("cleanup pass skipped: %s: %s", type(e).__name__, str(e)[:120])
             return text, "llm-skipped"
@@ -113,4 +136,4 @@ class Cleaner:
         if not cleaned or len(cleaned) > len(text) * 1.5 + 40:
             log.warning("cleanup result rejected: %d chars from %d", len(cleaned), len(text))
             return text, "llm-skipped"
-        return tidy(cleaned, self.terms), "llm"
+        return tidy(cleaned, terms), "llm"

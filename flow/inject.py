@@ -51,6 +51,13 @@ def _press_cmd_v() -> None:
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
 
 
+def copy(text: str) -> None:
+    """Puts text on the clipboard and leaves it there."""
+    pb = NSPasteboard.generalPasteboard()
+    pb.clearContents()
+    pb.setString_forType_(text, NSPasteboardTypeString)
+
+
 def paste(text: str, restore_delay: float = 0.4) -> None:
     """Pastes text at the cursor. Blocks for restore_delay while the target app reads the clipboard."""
     if not text:

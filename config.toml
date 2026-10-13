@@ -35,8 +35,9 @@ model = "whisper-large-v3"
 
 [stt.local]
 model = "mlx-community/whisper-large-v3-turbo"
-# "en" is the safest for mostly-English speech. Empty = auto-detect per clip.
-language = "en"
+# Each clip is heard as whichever of these fits best. Hindi comes out in Hindi script and the
+# cleanup pass rewrites it in Roman letters. Use ["en"] for English only.
+languages = ["en", "hi"]
 # The model uses about 2 GB of memory while loaded; it is freed after this much idle time.
 unload_after_idle_minutes = 10
 
@@ -51,6 +52,13 @@ timeout_seconds = 4
 lists = true
 # Clean transcripts at or under this many words skip the LLM pass.
 fast_path_max_words = 40
+
+[learning]
+# Remembers the words you correct and how you like text written. Everything stays on this Mac.
+enabled = true
+# After a paste, also reads that text field for up to 90 s to see how you edit the dictated text.
+# Works in native Mac text fields only; in browsers, VS Code and terminals use fix_last instead.
+auto_capture = false
 
 [dictionary]
 # Spelled exactly as written here. Add your own names and technical terms.
