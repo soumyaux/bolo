@@ -13,7 +13,8 @@ from . import ax, diff
 
 log = logging.getLogger(__name__)
 
-_INTERVAL_SECONDS = 1.0
+# Short, so an edit made just before pressing Enter is still seen.
+_INTERVAL_SECONDS = 0.3
 # A chat box is emptied on send; less overlap than this means the dictated text is gone.
 _SAME_TEXT = 0.5
 

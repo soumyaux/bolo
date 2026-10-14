@@ -1,5 +1,5 @@
 [project]
-name = "flow-backup"
+name = "bolo"
 version = "0.1.0"
 description = "Hold a key, speak, release: cleaned-up text is pasted into the focused app."
 requires-python = ">=3.12,<3.13"
@@ -12,6 +12,7 @@ dependencies = [
     "rumps>=0.4",
     "python-dotenv>=1.0",
     "mlx-whisper>=0.4",
+    "tomlkit>=0.15.1",
 ]
 
 [tool.uv]

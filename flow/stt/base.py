@@ -21,6 +21,10 @@ class Unavailable(SttError):
     """The provider cannot be used right now: no network, timeout, bad key, blocked, server error."""
 
 
+class BadResult(Unavailable):
+    """This clip came out as nonsense. Another provider should try it; this one is not rested."""
+
+
 class Provider(Protocol):
     name: str
 

@@ -1,12 +1,66 @@
 """Microphone capture held in memory, and FLAC encoding. Nothing is written to disk."""
 
+import ctypes
 import io
+import logging
 import subprocess
 import threading
+import time
 
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
+
+log = logging.getLogger(__name__)
+
+# Opening or closing the microphone takes well under a second. Longer means Core Audio is stuck,
+# usually on a Bluetooth headset that just went away; the caller is told instead of waiting forever.
+_DEVICE_SECONDS = 4
+
+
+class MicError(Exception):
+    pass
+
+
+def _within(seconds: float, work) -> None:
+    """Runs work, raising MicError if it does not finish in time. A stuck call is left behind on
+    its own thread, so the caller can go on."""
+    errors: list[BaseException] = []
+
+    def run():
+        try:
+            work()
+        except BaseException as e:
+            errors.append(e)
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(seconds)
+    if thread.is_alive():
+        raise MicError("Microphone not responding: reconnect it or restart Bolo")
+    if errors:
+        raise errors[0]
+
+
+class _Address(ctypes.Structure):
+    _fields_ = [("selector", ctypes.c_uint32), ("scope", ctypes.c_uint32), ("element", ctypes.c_uint32)]
+
+
+def default_input_id() -> int:
+    """Core Audio's id for the Mac's current input device, or 0 when it cannot be read. A headset
+    that connects or reconnects gets a new id."""
+    try:
+        core = ctypes.CDLL("/System/Library/Frameworks/CoreAudio.framework/CoreAudio")
+        # kAudioHardwarePropertyDefaultInputDevice 'dIn ', kAudioObjectPropertyScopeGlobal 'glob'.
+        address = _Address(0x64496E20, 0x676C6F62, 0)
+        device, size = ctypes.c_uint32(0), ctypes.c_uint32(4)
+        # kAudioObjectSystemObject is 1.
+        error = core.AudioObjectGetPropertyData(
+            1, ctypes.byref(address), 0, None, ctypes.byref(size), ctypes.byref(device)
+        )
+        return device.value if error == 0 else 0
+    except OSError:
+        return 0
 
 
 class Recorder:
@@ -19,12 +73,32 @@ class Recorder:
         self._frames = 0
         self._lock = threading.Lock()
         self._stream: sd.InputStream | None = None
+        # Counts recordings, so a reader of an old one never gets samples from the next.
+        self.take = 0
+        # The loudness of the latest block, from 0 to 1, for the on-screen meter.
+        self.level = 0.0
+        # PortAudio reads the list of devices once. It must read it again after the Mac's input
+        # changes (AirPods on or off), or it keeps opening a device that is gone and hears nothing.
+        self._device = default_input_id()
+        self._refresh = False
+        self._callbacks = 0
+        self._started_at = 0.0
 
     @property
     def recording(self) -> bool:
         return self._stream is not None
 
+    @property
+    def frames(self) -> int:
+        """Samples recorded so far in this clip."""
+        with self._lock:
+            return self._frames
+
     def _callback(self, indata, frames, time_info, status) -> None:
+        self._callbacks += 1
+        # About -50 dBFS shows as empty and -10 dBFS as full, so normal speech fills most of the meter.
+        peak = int(np.abs(indata.astype(np.int32)).max()) if frames else 0
+        self.level = max(0.0, (20 * np.log10(max(peak, 1) / 32768) + 50) / 40)
         with self._lock:
             if self._frames < self._max_frames:
                 self._chunks.append(indata.copy())
@@ -36,21 +110,80 @@ class Recorder:
         with self._lock:
             self._chunks = []
             self._frames = 0
-        self._stream = sd.InputStream(
-            samplerate=self.sample_rate,
-            channels=1,
-            dtype="int16",
-            callback=self._callback,
-        )
-        self._stream.start()
+            self.take += 1
+        device = default_input_id()
+        if device != self._device:
+            log.info("microphone changed, reading the device list again")
+            self._device, self._refresh = device, True
+        try:
+            self._open()
+        except Exception as e:
+            # Once more with a fresh device list: the one PortAudio holds may be out of date.
+            log.warning("microphone did not open (%s), trying again", e)
+            self._refresh = True
+            self._open()
+
+    def _open(self) -> None:
+        opened: list[sd.InputStream] = []
+        gave_up = threading.Event()
+
+        def work():
+            if self._refresh:
+                sd._terminate()
+                sd._initialize()
+                self._refresh = False
+            stream = sd.InputStream(
+                samplerate=self.sample_rate,
+                channels=1,
+                dtype="int16",
+                callback=self._callback,
+            )
+            stream.start()
+            if gave_up.is_set():
+                # Opened after the caller stopped waiting; it must not record into the next clip.
+                stream.close()
+            else:
+                opened.append(stream)
+
+        self._callbacks = 0
+        self._started_at = time.monotonic()
+        try:
+            _within(_DEVICE_SECONDS, work)
+        except MicError:
+            gave_up.set()
+            for stream in opened:
+                stream.close()
+            self._refresh = True
+            raise
+        self._stream = opened[0]
+
+    def snapshot(self, take: int, start: int) -> np.ndarray:
+        """The samples of recording take from start on, without stopping. Empty once it has ended."""
+        with self._lock:
+            if take != self.take or self._stream is None or not self._chunks:
+                return np.zeros(0, dtype=np.int16)
+            return np.concatenate(self._chunks)[start:, 0]
 
     def stop(self) -> np.ndarray:
         """Stops recording and returns the samples. The buffer is cleared."""
         stream, self._stream = self._stream, None
         if stream is None:
             return np.zeros(0, dtype=np.int16)
-        stream.stop()
-        stream.close()
+        if not self._callbacks and time.monotonic() - self._started_at > 0.5:
+            # The stream ran but the device sent nothing: it went away. Start fresh next time.
+            log.warning("the microphone sent no audio; the device list will be read again")
+            self._refresh = True
+
+        def close():
+            stream.stop()
+            stream.close()
+
+        try:
+            _within(_DEVICE_SECONDS, close)
+        except MicError:
+            log.warning("the microphone did not close; leaving it and starting fresh next time")
+            self._refresh = True
+        self.level = 0.0
         with self._lock:
             chunks, self._chunks = self._chunks, []
             self._frames = 0
@@ -84,6 +217,80 @@ def peak_dbfs(audio: np.ndarray) -> float:
         return -96.0
     peak = int(np.abs(audio.astype(np.int32)).max())
     return 20 * np.log10(max(peak, 1) / 32768)
+
+
+def pause_at(audio: np.ndarray, sample_rate: int, after: int, pause: float = 0.3) -> int | None:
+    """The middle of the last pause in speech at or after sample after, or None if there is none.
+
+    A pause is a stretch of at least pause seconds where the level stays near the room's noise
+    floor, so cutting there splits no word.
+    """
+    frame = sample_rate // 50  # 20 ms
+    usable = len(audio) // frame * frame
+    if usable <= after:
+        return None
+    rms = np.sqrt((audio[:usable].astype(np.float32).reshape(-1, frame) ** 2).mean(axis=1))
+    quiet = rms < max(np.percentile(rms, 10) * 3, 150)
+    need = int(pause * 50)
+    run = 0
+    for i in range(len(quiet) - 1, after // frame - 1, -1):
+        run = run + 1 if quiet[i] else 0
+        if run >= need:
+            # Walk to the end of this quiet stretch, then cut in its middle.
+            end = i + run
+            while end < len(quiet) and quiet[end]:
+                end += 1
+            return (i + end) // 2 * frame
+    return None
+
+
+def quietest(audio: np.ndarray, sample_rate: int, after: int) -> int:
+    """The start of the quietest 100 ms at or after sample after: the least bad place to cut."""
+    frame = sample_rate // 10
+    after = max(0, after) // frame * frame
+    usable = (len(audio) - after) // frame * frame
+    if usable <= 0:
+        return len(audio)
+    rms = (audio[after : after + usable].astype(np.float32).reshape(-1, frame) ** 2).mean(axis=1)
+    return after + int(rms.argmin()) * frame
+
+
+def cut(audio: np.ndarray, start: int, end: int) -> np.ndarray:
+    """Removes samples start to end, such as Bolo's own start sound heard by the microphone.
+
+    Cut, not silenced: a stretch of perfect silence would pull down the noise floor prepare()
+    measures, and room noise would then count as speech.
+    """
+    if end <= start or start >= len(audio):
+        return audio
+    return np.concatenate([audio[:start], audio[end:]])
+
+
+def prepare(audio: np.ndarray, sample_rate: int = 16000) -> np.ndarray:
+    """Cuts the silence before and after speech and brings quiet speech up to a steady level.
+
+    Whisper invents text ("Thank you.", the glossary, repeated words) to fill long silences, and
+    hears quiet speech less well. Returns no samples when nothing was said.
+    """
+    frame = sample_rate // 50  # 20 ms
+    usable = len(audio) // frame * frame
+    if usable == 0:
+        return audio[:0]
+    frames = audio[:usable].astype(np.float32).reshape(-1, frame)
+    rms = np.sqrt((frames**2).mean(axis=1))
+    # Speech is a frame well above the room's noise floor.
+    voiced = np.flatnonzero(rms > max(np.percentile(rms, 10) * 4, 200))
+    # Fewer than 0.1 s of speech is a cough, a click or room noise.
+    if len(voiced) < 5:
+        return audio[:0]
+    pad = sample_rate // 4  # keep soft first and last sounds
+    start = max(voiced[0] * frame - pad, 0)
+    end = min((voiced[-1] + 1) * frame + pad, len(audio))
+    clip = audio[start:end].astype(np.float32)
+    peak = float(np.abs(clip).max()) or 1.0
+    # Up to -1 dBFS, but never more than 20 dB of gain so room noise is not blown up.
+    gain = min(29000 / peak, 10.0)
+    return np.clip(clip * max(gain, 1.0), -32768, 32767).astype(np.int16)
 
 
 def to_flac(audio: np.ndarray, sample_rate: int = 16000) -> bytes:

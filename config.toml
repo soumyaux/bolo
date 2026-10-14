@@ -1,8 +1,11 @@
 [hotkey]
-# Hold this key to talk. Must differ from the Wispr Flow key.
-push_to_talk = "cmd_r"
+# Hold this key to talk: "fn", "cmd_r", "alt_r" or "ctrl_r". It answers even while Wispr Flow
+# runs, so if this is Wispr's key too, quit Wispr or both apps will type.
+push_to_talk = "fn"
 # Opens the "fix last dictation" window (step 12).
 fix_last = "<ctrl>+<alt>+f"
+# Pastes a dictation that was saved because it could not be transcribed or pasted at the time.
+paste_saved = "<ctrl>+<alt>+v"
 
 [wispr]
 # When true and Wispr Flow is not running, also answer on wispr_key.
@@ -16,6 +19,30 @@ min_seconds = 0.3
 max_seconds = 300
 # Silence the Mac's speakers while the key is held, then put the sound back.
 mute_while_recording = true
+# Double-tap the talk key to keep recording without holding it; tap it once more to finish.
+# Recording stops by itself at max_seconds.
+hands_free = true
+# For long dictations: every this many seconds of speech, the local model starts writing what you
+# said so far, cutting at a pause, so the text is ready about 1 s after you let go. 0 = off.
+chunk_seconds = 20
+# If you switch to another app or window while Bolo is still writing, the text is kept instead of
+# pasted into the wrong place; press paste_saved (⌃⌥V) where you want it.
+guard_window = true
+
+[sounds]
+# A soft sound when recording starts, another when it stops, and one when a dictation fails.
+enabled = true
+# 0 to 1, on top of the Mac's own volume.
+volume = 0.5
+# Any sound in /System/Library/Sounds or ~/Library/Sounds, by name. "" for no sound.
+start = "Tink"
+stop = "Pop"
+error = "Basso"
+
+[recovery]
+# When a dictation cannot be transcribed, its audio is kept and tried again in the background.
+# Saved audio and text are deleted once pasted, or after this many hours.
+keep_hours = 24
 
 [stt]
 # Tried in order. A failure, a 429 or a timeout moves to the next one.
@@ -53,12 +80,55 @@ lists = true
 # Clean transcripts at or under this many words skip the LLM pass.
 fast_path_max_words = 40
 
+[prompt_mode]
+# Turns rambling speech into a structured prompt for an AI tool (Goal, Context, Requirements,
+# Constraints, and Open questions only when you asked some). Nothing you said is dropped or added.
+# Start a dictation with one of these words to use it.
+use_prefix = true
+prefixes = ["as a prompt", "prompt mode"]
+# Or hold this key instead of the talk key: "alt_r", "ctrl_r", "cmd_r" or "fn". "" = off.
+key = ""
+# Always use it in apps whose style is "prompt" (Cursor, VS Code, Antigravity).
+in_prompt_apps = false
+# If the prompt takes longer than this, the plainly cleaned text is pasted instead.
+timeout_seconds = 8
+
+[styles]
+# How text is written in each app: "prompt", "casual", "formal" or "default". A style changes
+# punctuation and layout, never your words. Any style but "default" always uses the cleanup pass,
+# even for a short sentence (about 1 s more). Apps not listed use "default".
+
+[styles.apps]
+# By bundle ID, or by the app's name as shown in the menu bar.
+"com.todesktop.230313mzl4w4u92" = "prompt"   # Cursor
+"com.microsoft.VSCode" = "prompt"
+"com.google.antigravity-ide" = "prompt"      # Antigravity
+"com.tinyspeck.slackmacgap" = "casual"       # Slack
+"net.whatsapp.WhatsApp" = "casual"           # WhatsApp
+"com.apple.MobileSMS" = "casual"             # Messages
+"com.apple.mail" = "formal"                  # Mail
+"com.microsoft.Outlook" = "formal"           # Outlook
+
+[styles.sites]
+# In a browser, by the page's address. An entry also covers its subdomains.
+"mail.google.com" = "formal"
+"outlook.office.com" = "formal"
+"outlook.live.com" = "formal"
+"web.whatsapp.com" = "casual"
+"app.slack.com" = "casual"
+
+[styles.titles]
+# Used only when a browser does not show the page's address: words looked for in the window title.
+"Gmail" = "formal"
+"WhatsApp" = "casual"
+
 [learning]
 # Remembers the words you correct and how you like text written. Everything stays on this Mac.
 enabled = true
-# After a paste, also reads that text field for up to 90 s to see how you edit the dictated text.
-# Works in native Mac text fields only; in browsers, VS Code and terminals use fix_last instead.
-auto_capture = false
+# After a paste, reads that text field for up to 90 s and learns from how you edit the dictated text.
+# Works in Mac text fields, Cursor, VS Code, Slack and Chromium browsers; not in terminals.
+# Where it cannot read the field, use fix_last instead.
+auto_capture = true
 
 [dictionary]
 # Spelled exactly as written here. Add your own names and technical terms.
@@ -68,4 +138,28 @@ terms = [
     "Hinglish",
     "pyproject.toml",
     "uv",
+    "Cursor",
+    "Claude",
+    "CSS",
+    "impact-ui",
+]
+# Words you say often. They help the speech model hear them and the cleanup pass fix sound-alike
+# mistakes ("site banner" for "side panel"), but their spelling is not forced like terms above.
+hints = [
+    "side panel",
+    "dropdown",
+    "accordion",
+    "padding",
+    "spacing",
+    "gap",
+    "layout",
+    "custom CSS",
+    "card",
+    "select",
+    "label",
+    "legend",
+    "table",
+    "audit log",
+    "root cause",
+    "button",
 ]

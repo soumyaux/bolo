@@ -5,14 +5,14 @@ import threading
 import time
 from pathlib import Path
 
-PATH = Path.home() / "Library/Application Support/FlowBackup/learning.db"
+PATH = Path.home() / "Library/Application Support/Bolo/learning.db"
 # Dictated text is only needed to fix recent ones, so older rows are dropped.
 _KEEP_DICTATIONS = 200
 _KEEP_EXAMPLES = 20
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS dictations (
-    id INTEGER PRIMARY KEY, time REAL, app TEXT, raw TEXT, pasted TEXT, corrected TEXT);
+    id INTEGER PRIMARY KEY, time REAL, app TEXT, raw TEXT, pasted TEXT, corrected TEXT, mode TEXT);
 CREATE TABLE IF NOT EXISTS vocabulary (
     heard TEXT, intended TEXT, count INTEGER DEFAULT 0, enabled INTEGER DEFAULT 1,
     PRIMARY KEY (heard, intended));
@@ -32,16 +32,20 @@ class Store:
         self._lock = threading.Lock()
         with self._lock, self._db:
             self._db.executescript(_SCHEMA)
+            # Files made before prompt mode have no mode column.
+            columns = {row["name"] for row in self._db.execute("PRAGMA table_info(dictations)")}
+            if "mode" not in columns:
+                self._db.execute("ALTER TABLE dictations ADD COLUMN mode TEXT")
 
     def _run(self, sql: str, *args) -> list[sqlite3.Row]:
         with self._lock, self._db:
             return self._db.execute(sql, args).fetchall()
 
-    def add_dictation(self, app: str, raw: str, pasted: str) -> int:
+    def add_dictation(self, app: str, raw: str, pasted: str, mode: str = "") -> int:
         with self._lock, self._db:
             row = self._db.execute(
-                "INSERT INTO dictations (time, app, raw, pasted) VALUES (?, ?, ?, ?)",
-                (time.time(), app, raw, pasted),
+                "INSERT INTO dictations (time, app, raw, pasted, mode) VALUES (?, ?, ?, ?, ?)",
+                (time.time(), app, raw, pasted, mode),
             )
             self._db.execute(
                 "DELETE FROM dictations WHERE id <= ?", (row.lastrowid - _KEEP_DICTATIONS,)
@@ -89,4 +93,4 @@ class Store:
             self._db.execute("DELETE FROM examples WHERE id <= ?", (row.lastrowid - _KEEP_EXAMPLES,))
 
     def examples(self) -> list[sqlite3.Row]:
-        return self._run("SELECT raw, final FROM examples ORDER BY id DESC LIMIT ?", _KEEP_EXAMPLES)
+        return self._run("SELECT raw, final, app FROM examples ORDER BY id DESC LIMIT ?", _KEEP_EXAMPLES)

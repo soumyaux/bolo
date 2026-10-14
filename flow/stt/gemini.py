@@ -8,6 +8,7 @@ inline is rejected the provider switches to upload-then-transcribe and stays the
 import base64
 import logging
 import time
+from collections.abc import Callable
 
 import httpx
 
@@ -41,8 +42,11 @@ class GeminiTranscribe:
         language_codes: list[str] | None = None,
         smart_mode: bool = True,
         timeout: float = 8,
+        on_request: Callable[[], None] | None = None,
     ):
+        """on_request runs for every transcription request sent, to count them against the daily limit."""
         self.model = model
+        self._on_request = on_request
         self.language_codes = language_codes or []
         self.smart_mode = smart_mode
         self.inline = True
@@ -88,6 +92,8 @@ class GeminiTranscribe:
             body["generation_config"] = {"transcription_config": transcription}
         # The free tier often answers 503 "high demand" and then accepts the same request.
         for attempt in range(_BUSY_RETRIES + 1):
+            if self._on_request:
+                self._on_request()
             response = self._client.post("/v1beta/interactions", json=body)
             if response.status_code != 503 or attempt == _BUSY_RETRIES:
                 break

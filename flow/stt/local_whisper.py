@@ -3,19 +3,41 @@
 import io
 import logging
 import os
+import re
 import threading
 import time
+import zlib
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import soundfile as sf
 
-from .base import Unavailable
+from .base import BadResult, Unavailable
 
 # The model is already downloaded; never contact Hugging Face while the app runs.
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 log = logging.getLogger(__name__)
+
+_WORD = re.compile(r"\w+")
+
+
+def _broken(text: str, prompt: str) -> str:
+    """Why a transcript is nonsense, or "" when it looks like real speech."""
+    words = _WORD.findall(text.lower())
+    if not words:
+        return ""
+    # Whisper stuck in a loop: "1 1 1 1 1" or the same phrase over and over.
+    if len(text) >= 40 and len(text) / len(zlib.compress(text.encode())) > 2.4:
+        return "repeats itself"
+    if re.search(r"\b(\w+)(?:\W+\1\b){5}", text.lower()):
+        return "repeats itself"
+    # Whisper read the prompt back instead of hearing speech: four prompt words in the prompt's order.
+    said = " " + " ".join(words) + " "
+    listed = _WORD.findall(prompt.lower())
+    if any(" " + " ".join(listed[i : i + 4]) + " " in said for i in range(len(listed) - 3)):
+        return "repeats the glossary"
+    return ""
 
 
 class LocalWhisper:
@@ -90,20 +112,36 @@ class LocalWhisper:
         model = ModelHolder.get_model(self.model, mx.float16)
         mel = log_mel_spectrogram(samples, n_mels=model.dims.n_mels, padding=N_SAMPLES)
         _, probs = model.detect_language(pad_or_trim(mel, N_FRAMES, axis=-2).astype(mx.float16))
-        return max(self.languages, key=lambda code: probs.get(code, 0.0))
+        first = self.languages[0]
+        best = max(self.languages, key=lambda code: probs.get(code, 0.0))
+        # An Indian accent can look a little like Hindi. Switch only when the other language clearly wins.
+        return best if probs.get(best, 0.0) > 2 * probs.get(first, 0.0) else first
 
     def _run(self, flac: bytes, vocabulary: list[str] | None) -> str:
-        import mlx_whisper
-
         self._load()
         samples, _ = sf.read(io.BytesIO(flac), dtype="float32")
         self.last_language = self._pick_language(samples)
+        # Whisper treats the prompt as what was said just before, so it spells these words this way.
+        # A plain list, without a label: a label like "Glossary:" was read back as speech.
+        prompt = ", ".join(dict.fromkeys(vocabulary or [])) + "." if vocabulary else ""
+        text = self._decode(samples, prompt)
+        reason = _broken(text, prompt)
+        if reason and prompt:
+            # Try once more without the prompt, which is often what it got stuck on.
+            text = self._decode(samples, "")
+            reason = _broken(text, "")
+        if reason:
+            raise BadResult(f"{self.name}: transcript {reason}: {text[:60]!r}")
+        return text
+
+    def _decode(self, samples: np.ndarray, prompt: str) -> str:
+        import mlx_whisper
+
         result = mlx_whisper.transcribe(
             samples,
             path_or_hf_repo=self.model,
             language=self.last_language,
-            # Whisper spells words the way they appear in this text.
-            initial_prompt="Glossary: " + ", ".join(vocabulary) + "." if vocabulary else None,
+            initial_prompt=prompt or None,
             condition_on_previous_text=False,
             verbose=None,
         )
@@ -112,6 +150,8 @@ class LocalWhisper:
     def transcribe(self, flac: bytes, vocabulary: list[str] | None = None) -> str:
         try:
             return self._pool.submit(self._run, flac, vocabulary).result()
+        except BadResult:
+            raise
         except Exception as e:
             raise Unavailable(f"{self.name}: {type(e).__name__}: {e}") from e
         finally:

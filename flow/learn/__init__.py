@@ -42,15 +42,18 @@ class Learning:
             text = re.sub(pattern, lambda _: row["intended"], text, flags=re.IGNORECASE)
         return text
 
-    def examples(self, text: str) -> list[tuple[str, str]]:
-        """The past corrections most like this text, as (raw transcript, what the user wanted)."""
+    def examples(self, text: str, app: str = "") -> list[tuple[str, str]]:
+        """The past corrections most like this text, as (raw transcript, what the user wanted).
+        Corrections made in the same app come first: a Slack message is written unlike an email."""
         if self.store is None:
             return []
-        rows = sorted(self.store.examples(), key=lambda r: -diff.similarity(text, r["raw"]))
+        rows = sorted(
+            self.store.examples(), key=lambda r: (bool(app) and r["app"] != app, -diff.similarity(text, r["raw"]))
+        )
         return [(row["raw"], row["final"]) for row in rows[:_EXAMPLES]]
 
-    def record(self, app: str, raw: str, pasted: str) -> int | None:
-        return self.store.add_dictation(app, raw, pasted) if self.store else None
+    def record(self, app: str, raw: str, pasted: str, mode: str = "") -> int | None:
+        return self.store.add_dictation(app, raw, pasted, mode) if self.store else None
 
     def last(self) -> tuple[int, str] | None:
         """The most recent dictation as (id, the text as it now stands)."""
@@ -66,8 +69,9 @@ class Learning:
         found = diff.swaps(before, after)
         for swap in found:
             self.store.see_swap(swap.heard, swap.intended, 2 if swap.name else 1)
-        # A rewrite changes the meaning, so it is not an example of how to clean up.
-        if found or diff.similarity(before, after) >= 0.7:
+        # A rewrite changes the meaning, so it is not an example of how to clean up. Nor is a
+        # prompt-mode dictation: it would teach the normal cleanup to restructure text.
+        if row["mode"] != "prompt" and (found or diff.similarity(before, after) >= 0.7):
             self.store.add_example(row["raw"], after, row["app"])
         log.info("correction saved, %d word swap(s)", len(found))
         return found

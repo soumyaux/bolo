@@ -10,20 +10,28 @@ import queue
 import sys
 import threading
 import time
+import traceback
+from pathlib import Path
 
+import objc
 import Quartz
 import rumps
-from AppKit import NSBundle, NSWorkspace
-from ApplicationServices import AXIsProcessTrustedWithOptions, kAXTrustedCheckOptionPrompt
+from AppKit import NSBundle, NSRunningApplication, NSWorkspace
+from ApplicationServices import AXIsProcessTrusted, AXIsProcessTrustedWithOptions, kAXTrustedCheckOptionPrompt
 from PyObjCTools import AppHelper
 
-from . import audio, config, inject, login
-from .cleanup import Cleaner
+from . import audio, config, inject, login, sounds, styles
+from .usage import Usage
+from .cleanup import Cleaner, prompt_prefix
+from .early import EarlyText
 from .learn import Learning, ax
 from .learn.ax_watch import Watcher
 from .learn.fix_window import FixWindow
 from .learn.store import PATH as LEARNING_DB
-from .stt.base import RateLimited, SttError, Unavailable
+from .overlay import Overlay
+from .pending import Pending, Saved
+from .settings_window import SettingsWindow
+from .stt.base import BadResult, RateLimited, SttError, Unavailable
 from .stt.gemini import GeminiTranscribe
 from .stt.local_whisper import LocalWhisper
 
@@ -38,8 +46,26 @@ _KEYS = {
     "ctrl_r": (62, 0x2000),
     "fn": (63, Quartz.kCGEventFlagMaskSecondaryFn),
 }
+_ESCAPE = 53
+# Said at the start of a dictation, these turn it into a structured prompt.
+_PROMPT_PREFIXES = ["as a prompt", "prompt mode"]
+# A press shorter than this is a tap; two taps this close together start hands-free recording.
+_TAP_SECONDS, _DOUBLE_TAP_SECONDS = 0.3, 0.4
+_KEY_LABELS = {"cmd_r": "right ⌘", "alt_r": "right ⌥", "ctrl_r": "right ⌃", "fn": "fn"}
+# The general modifier flag each talk key also sets, so it is not mistaken for another modifier.
+_KEY_FAMILY = {
+    "cmd_r": Quartz.kCGEventFlagMaskCommand,
+    "alt_r": Quartz.kCGEventFlagMaskAlternate,
+    "ctrl_r": Quartz.kCGEventFlagMaskControl,
+    "fn": 0,
+}
 # Clips quieter than this are treated as silence and never sent.
 _QUIET_DBFS = -50
+# A played sound reaches the built-in speakers about 80 ms later (measured), and its echo dies
+# away soon after. Muting waits for the first; both are cut from the start of the clip.
+_SPEAKER_SECONDS, _ECHO_SECONDS = 0.1, 0.06
+# No step of a key press takes this long (opening a stuck microphone gives up after 8 s).
+_STUCK_SECONDS = 15
 # Key codes of the letters and the modifier names a shortcut in config.toml may use.
 _LETTERS = {
     "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9, "b": 11, "q": 12,
@@ -54,14 +80,49 @@ _MODIFIERS = {
 }
 
 
+def _sees_window_titles() -> bool:
+    """macOS hides other apps' window titles without Screen Recording. The preflight call can
+    answer no for an unsigned app that has it, so this checks what the app can actually see."""
+    windows = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID)
+    me = NSRunningApplication.currentApplication().processIdentifier()
+    # The Dock's and the menu bar's window titles are visible to every app.
+    return any(
+        w.get("kCGWindowName")
+        for w in windows or []
+        if w.get("kCGWindowOwnerPID") != me and w.get("kCGWindowOwnerName") not in ("Dock", "Window Server")
+    )
+
+
+def permissions() -> dict[str, bool]:
+    """Which macOS privacy permissions this app has. Asks for none of them."""
+    NSBundle.bundleWithPath_("/System/Library/Frameworks/AVFoundation.framework").load()
+    microphone = objc.lookUpClass("AVCaptureDevice").authorizationStatusForMediaType_("soun") == 3
+    # Only an app with Full Disk Access can open the privacy database.
+    try:
+        open(Path.home() / "Library/Application Support/com.apple.TCC/TCC.db", "rb").close()
+        full_disk = True
+    except OSError:
+        full_disk = False
+    return {
+        "Accessibility": bool(AXIsProcessTrusted()),
+        "Input Monitoring": bool(Quartz.CGPreflightListenEventAccess()),
+        "Microphone": microphone,
+        "Screen Recording": bool(Quartz.CGPreflightScreenCaptureAccess()) or _sees_window_titles(),
+        "Full Disk Access": full_disk,
+    }
+
+
 def wispr_running() -> bool:
     apps = NSWorkspace.sharedWorkspace().runningApplications()
     return any((a.localizedName() or "") == "Wispr Flow" for a in apps)
 
 
-def front_app() -> str:
+def open_up_front_app(learning: bool) -> None:
+    """Lets the learning read the text field in the app the user is dictating into, and a browser
+    show the address of its page, which picks the writing style."""
     app = NSWorkspace.sharedWorkspace().frontmostApplication()
-    return (app.localizedName() or "") if app else ""
+    if app and (learning or (app.bundleIdentifier() or "") in styles.BROWSERS):
+        ax.open_up(app.processIdentifier(), app.bundleIdentifier() or "")
 
 
 def parse_shortcut(text: str) -> tuple[int, int] | None:
@@ -84,6 +145,12 @@ class Chain:
         self.providers = providers
         self._rest_until: dict[str, float] = {}
 
+    def first_ready(self):
+        """The provider that would be tried first now, or None."""
+        now = time.monotonic()
+        ready = [p for p in self.providers if now >= self._rest_until.get(p.name, 0)]
+        return (ready or self.providers or [None])[0]
+
     def transcribe(self, flac: bytes, vocabulary: list[str]) -> tuple[str, str]:
         now = time.monotonic()
         ready = [p for p in self.providers if now >= self._rest_until.get(p.name, 0)]
@@ -94,6 +161,8 @@ class Chain:
             except RateLimited as e:
                 self._rest_until[provider.name] = now + (e.retry_after or 60)
                 errors.append(str(e))
+            except BadResult as e:
+                errors.append(str(e))
             except Unavailable as e:
                 self._rest_until[provider.name] = now + 30
                 errors.append(str(e))
@@ -101,7 +170,7 @@ class Chain:
         raise Unavailable("; ".join(errors) or "no speech provider is set up")
 
 
-def build_providers(cfg: dict) -> list:
+def build_providers(cfg: dict, usage: Usage | None = None) -> list:
     providers = []
     for name in cfg["stt"]["order"]:
         if name == "gemini" and config.key("GEMINI_API_KEY"):
@@ -113,6 +182,7 @@ def build_providers(cfg: dict) -> list:
                     language_codes=gemini["language_codes"],
                     smart_mode=gemini["smart_mode"],
                     timeout=cfg["stt"]["timeout_seconds"],
+                    on_request=usage and (lambda: usage.add("gemini_speech", pacific=True)),
                 )
             )
         elif name == "local":
@@ -127,37 +197,81 @@ def build_providers(cfg: dict) -> list:
 
 class FlowApp(rumps.App):
     def __init__(self, cfg: dict):
-        super().__init__("Flow Backup", title=IDLE, quit_button="Quit")
+        super().__init__("Bolo", title=IDLE, quit_button="Quit")
         self.cfg = cfg
         self.status = rumps.MenuItem("Starting...")
+        self.usage = Usage()
+        self.used_today = rumps.MenuItem("Today: 0 dictations")
+        self.gemini_today = rumps.MenuItem("Gemini today")
         self.learned = rumps.MenuItem("Learned words")
+        self.saved = rumps.MenuItem("Saved dictations")
         self.at_login = rumps.MenuItem("Start at login", callback=self._toggle_login)
         self.at_login.state = login.starts_at_login()
         self.menu = [
             self.status,
+            self.used_today,
+            self.gemini_today,
+            None,
             rumps.MenuItem("Fix last dictation...", callback=lambda _: self._open_fix()),
+            rumps.MenuItem("Settings…", callback=lambda _: self.settings_window.show(self.cfg)),
+            self.saved,
             self.learned,
             self.at_login,
         ]
         self.recorder = audio.Recorder(cfg["audio"]["sample_rate"], cfg["audio"]["max_seconds"])
-        self.chain = Chain(build_providers(cfg))
-        self.cleaner = Cleaner(cfg, config.key("GEMINI_API_KEY"))
+        self.chain = Chain(build_providers(cfg, self.usage))
+        self.cleaner = Cleaner(cfg, config.key("GEMINI_API_KEY"), self._count_cleanup)
         learning = cfg["learning"]
         self.learning = Learning(learning["enabled"])
         self.fix_window = FixWindow(self._fix_saved)
+        self.settings_window = SettingsWindow(self._save_settings)
         self.watcher = Watcher(self._learn) if learning["enabled"] and learning["auto_capture"] else None
-        self._fix_key = parse_shortcut(cfg["hotkey"]["fix_last"])
-        if self._fix_key is None:
-            log.warning("fix_last shortcut %r cannot be read", cfg["hotkey"]["fix_last"])
+        self.pending = Pending(LEARNING_DB.parent / "pending", cfg["recovery"]["keep_hours"])
+        # Shortcut (key code, modifiers) -> what it does. Both run on the main thread.
+        self._shortcuts = {}
+        for setting, action in (("fix_last", self._open_fix), ("paste_saved", self._paste_oldest_saved)):
+            shortcut = parse_shortcut(cfg["hotkey"].get(setting, ""))
+            if shortcut is None:
+                log.warning("%s shortcut %r cannot be read", setting, cfg["hotkey"].get(setting))
+            else:
+                self._shortcuts[shortcut] = action
         self._refresh_learned()
+        self._refresh_saved()
+        self._refresh_usage()
         self._commands: queue.Queue[str] = queue.Queue()
         self._paste_lock = threading.Lock()
         self._held: str | None = None
+        # Hands-free: recording goes on after the key is let go, until the next tap.
+        self._locked = False
+        self._down_at = 0.0
+        self._last_tap = 0.0
+        self._ignore_up: str | None = None
+        self._lock_key = ""
+        self._lock_session = 0
+        # True when the dictation being recorded was started with the prompt-mode key.
+        self._prompt_key_used = False
+        # Turns a long recording into text while the user still speaks; None when not in use.
+        self._early: EarlyText | None = None
+        # True while a clip is being turned into text; Esc then cancels the paste.
+        self._writing = False
+        self._cancelled = threading.Event()
+        self.overlay = Overlay(lambda: self.recorder.level, self._cancel)
         self._muted = False
+        self.sounds = sounds.Sounds(cfg)
+        # Where the start sound is in the clip being recorded: (first sample, samples to cut).
+        self._beep = (0, 0)
         atexit.register(self._restore_sound)
         self._tap = None
         self._problem = self._check_setup()
-        threading.Thread(target=self._worker, daemon=True).start()
+        # The command the worker is on and when it began, or None while it waits for the next.
+        self._busy: tuple[str, float] | None = None
+        self._stuck_reported = False
+        worker = threading.Thread(target=self._worker, daemon=True)
+        worker.start()
+        self._worker_id = worker.ident
+        threading.Thread(target=self._retry_saved, daemon=True).start()
+        self._watchdog_timer = rumps.Timer(self._watchdog, 0.25)
+        self._watchdog_timer.start()
 
     def _check_setup(self) -> str:
         """Asks macOS for the permissions and starts the key listener. Returns a problem or ''."""
@@ -167,14 +281,14 @@ class FlowApp(rumps.App):
         mask = Quartz.CGEventMaskBit(Quartz.kCGEventFlagsChanged) | Quartz.CGEventMaskBit(
             Quartz.kCGEventKeyDown
         )
-        self._tap = Quartz.CGEventTapCreate(
-            Quartz.kCGSessionEventTap,
-            Quartz.kCGHeadInsertEventTap,
-            Quartz.kCGEventTapOptionListenOnly,
-            mask,
-            self._on_event,
-            None,
-        )
+        # A tap that can hold back keys lets Esc cancel without also reaching the focused app.
+        # It needs Accessibility; without it, listen only and Esc reaches the app as well.
+        for option in (Quartz.kCGEventTapOptionDefault, Quartz.kCGEventTapOptionListenOnly):
+            self._tap = Quartz.CGEventTapCreate(
+                Quartz.kCGSessionEventTap, Quartz.kCGHeadInsertEventTap, option, mask, self._on_event, None
+            )
+            if self._tap is not None:
+                break
         if self._tap is None:
             return "Allow Input Monitoring, then restart"
         source = Quartz.CFMachPortCreateRunLoopSource(None, self._tap, 0)
@@ -186,41 +300,134 @@ class FlowApp(rumps.App):
             return "Add GEMINI_API_KEY to .env, then restart"
         return ""
 
+    def _prompt_key(self) -> str:
+        """The key that records in prompt mode, or "" when that trigger is off."""
+        key = self.cfg.get("prompt_mode", {}).get("key", "")
+        return key if key in _KEYS and key != self.cfg["hotkey"]["push_to_talk"] else ""
+
     def _key_active(self, name: str) -> bool:
-        if name == self.cfg["hotkey"]["push_to_talk"]:
+        if name in (self.cfg["hotkey"]["push_to_talk"], self._prompt_key()):
             return True
         wispr = self.cfg["wispr"]
         return wispr["takeover"] and name == wispr["wispr_key"] and not wispr_running()
 
     def _on_event(self, proxy, kind, event, refcon):
         if kind in (Quartz.kCGEventTapDisabledByTimeout, Quartz.kCGEventTapDisabledByUserInput):
+            log.warning("key listener was switched off by macOS (%s); switching it back on", kind)
             Quartz.CGEventTapEnable(self._tap, True)
             return event
+        try:
+            return self._handle_event(kind, event)
+        except Exception:
+            # An error here must not swallow the user's keystroke.
+            log.exception("key event failed")
+            return event
+
+    def _handle_event(self, kind, event):
         if kind == Quartz.kCGEventKeyDown:
+            code = Quartz.CGEventGetIntegerValueField(event, Quartz.kCGKeyboardEventKeycode)
+            if code == _ESCAPE and (self._held is not None or self._locked or self._writing):
+                # Esc belongs to Bolo while it listens or writes, so it is held back from the app.
+                self._cancel()
+                return None
             # Another key while holding means a shortcut such as Cmd+C, not dictation.
             if self._held is not None:
                 self._held = None
                 self._commands.put("cancel")
-            elif self._fix_key and not Quartz.CGEventGetIntegerValueField(
-                event, Quartz.kCGKeyboardEventAutorepeat
-            ):
-                code = Quartz.CGEventGetIntegerValueField(event, Quartz.kCGKeyboardEventKeycode)
+            if not Quartz.CGEventGetIntegerValueField(event, Quartz.kCGKeyboardEventAutorepeat):
                 held = Quartz.CGEventGetFlags(event) & sum(_MODIFIERS.values())
-                if (code, held) == self._fix_key:
-                    AppHelper.callAfter(self._open_fix)
+                action = self._shortcuts.get((code, held))
+                if action:
+                    AppHelper.callAfter(action)
             return event
         code = Quartz.CGEventGetIntegerValueField(event, Quartz.kCGKeyboardEventKeycode)
         for name, (keycode, flag) in _KEYS.items():
             if code != keycode:
                 continue
-            down = bool(Quartz.CGEventGetFlags(event) & flag)
-            if down and self._held is None and self._key_active(name):
-                self._held = name
-                self._commands.put("down")
-            elif not down and self._held == name:
+            flags = Quartz.CGEventGetFlags(event)
+            down = bool(flags & flag)
+            # Ctrl, Shift, Option or Cmd already held: the start of a shortcut such as ⌃⌥F, not speech.
+            chord = flags & sum(_MODIFIERS.values()) & ~_KEY_FAMILY[name]
+            now = time.monotonic()
+            if down and self._locked and self._key_active(name):
+                # A tap during hands-free recording finishes it.
+                self._locked = False
                 self._held = None
+                self._ignore_up = name
                 self._commands.put("up")
+            elif down and self._held is None and not chord and self._key_active(name):
+                self._held = name
+                self._down_at = now
+                # A release missed earlier must not swallow the release of this press.
+                self._ignore_up = None
+                self._prompt_key_used = name == self._prompt_key()
+                self._commands.put("down")
+                if self.cfg["audio"]["hands_free"] and now - self._last_tap < _DOUBLE_TAP_SECONDS:
+                    self._locked = True
+                    self._lock_key = name
+                    self._commands.put("lock")
+            elif not down and self._held == name:
+                self._released(now)
+            elif not down and self._ignore_up == name:
+                self._ignore_up = None
         return event
+
+    def _released(self, now: float) -> None:
+        """The talk key went up. Main thread."""
+        self._held = None
+        if self._locked:
+            return
+        if now - self._down_at < _TAP_SECONDS:
+            # Too short to be speech; it may be the first half of a double tap.
+            self._last_tap = now
+            self._commands.put("tap")
+        else:
+            self._commands.put("up")
+
+    def _watchdog(self, _timer=None) -> None:
+        """Main thread, a few times a second. Undoes the ways the app could stop listening."""
+        now = time.monotonic()
+        # macOS can switch the key listener off without telling it, after sleep for example.
+        if self._tap is not None and not Quartz.CGEventTapIsEnabled(self._tap):
+            log.warning("key listener was off; switching it back on")
+            Quartz.CGEventTapEnable(self._tap, True)
+        # A key release can be missed while the listener is off. Without this, the next press
+        # would be ignored and the recording would run on with the speakers muted.
+        name = self._held
+        if name and not self._locked and now - self._down_at > 0.5:
+            flag = _KEY_FAMILY[name] or _KEYS[name][1]
+            if not Quartz.CGEventSourceFlagsState(Quartz.kCGEventSourceStateHIDSystemState) & flag:
+                log.warning("missed the release of %s; finishing the recording", name)
+                self._released(now)
+        busy = self._busy
+        if busy is None:
+            self._stuck_reported = False
+        elif now - busy[1] > _STUCK_SECONDS and not self._stuck_reported:
+            # Every key press waits behind this one, so say so and record where it is stuck.
+            self._stuck_reported = True
+            frame = sys._current_frames().get(self._worker_id)
+            where = "".join(traceback.format_stack(frame)) if frame else "unknown"
+            log.warning("stuck for %.0f s on %r at:\n%s", now - busy[1], busy[0], where)
+            self.title = WARN
+            self.status.title = "Bolo is stuck: restart it (details in ~/Library/Logs/Bolo.log)"
+
+    def _hands_free_limit(self, session: int) -> None:
+        if self._locked and session == self._lock_session:
+            self._locked = False
+            self._commands.put("up")
+
+    def _cancel(self) -> None:
+        """Esc or the pill's ×: drops the recording, or the text still being written."""
+        if self._held is not None or self._locked:
+            self._held = None
+            self._locked = False
+            self._commands.put("cancel")
+        elif self._writing:
+            self._cancelled.set()
+            self._pill("message", "Cancelled")
+
+    def _pill(self, method: str, *args) -> None:
+        AppHelper.callAfter(getattr(self.overlay, method), *args)
 
     def _show(self, title: str, status: str | None = None) -> None:
         def apply():
@@ -236,6 +443,38 @@ class FlowApp(rumps.App):
         if item.state:
             # The login copy runs as its own app and needs the permissions granted to it once.
             self.status.title = f"Open {login.NAME} from Applications once and allow access"
+
+    def _save_settings(self, changes: dict) -> None:
+        """Main thread. Writes the settings window's changes to config.toml and applies them now."""
+        try:
+            config.save(changes)
+            cfg = config.load()
+        except (OSError, ValueError) as e:
+            log.warning("settings not saved: %s", e)
+            raise ValueError(f"config.toml could not be saved: {e}"[:120]) from e
+        self._apply_settings(cfg)
+        log.info("settings saved")
+        self._pill("message", "Settings saved")
+
+    def _apply_settings(self, cfg: dict) -> None:
+        """Uses new settings without a restart. Keys, hands-free, mute, styles and prompt mode are
+        read from self.cfg each time; the rest is rebuilt here."""
+        self.cfg = cfg
+        self.cleaner = Cleaner(cfg, config.key("GEMINI_API_KEY"), self._count_cleanup)
+        self.sounds.update(cfg)
+        learning = cfg["learning"]
+        if learning["enabled"] and learning["auto_capture"]:
+            self.watcher = self.watcher or Watcher(self._learn)
+        elif self.watcher:
+            self.watcher.finish()
+            self.watcher = None
+
+    def _count_cleanup(self) -> None:
+        self.usage.add("gemini_cleanup", pacific=True)
+
+    def _refresh_usage(self) -> None:
+        """Updates the two usage lines in the menu. Main thread only."""
+        self.used_today.title, self.gemini_today.title = self.usage.lines()
 
     def _refresh_learned(self) -> None:
         """Rebuilds the "Learned words" menu. Main thread only."""
@@ -307,6 +546,7 @@ class FlowApp(rumps.App):
         AppHelper.callAfter(self._refresh_learned)
         summary = "Learned: " + ", ".join(f"{s.heard} → {s.intended}" for s in swaps)
         self._show(self.title, summary[:80])
+        self._pill("message", summary[:60])
         return summary[:80]
 
     def _warm_providers(self) -> None:
@@ -334,67 +574,341 @@ class FlowApp(rumps.App):
             log.warning("not ready: %s", self._problem)
         else:
             log.info("ready")
+        log.info("permissions: %s", ", ".join(f"{name} {'yes' if ok else 'NO'}" for name, ok in permissions().items()))
         while True:
             command = self._commands.get()
+            self._busy = (command, time.monotonic())
             try:
                 if command == "down":
-                    # Record first so no word is lost, then silence the speakers.
+                    # Record first so no word is lost, then the start sound, then silence the speakers.
                     self.recorder.start()
+                    at = self.recorder.frames
+                    audible = self.sounds.play("start")
+                    played = time.monotonic()
+                    rate = self.recorder.sample_rate
+                    self._beep = (at, int((audible + _SPEAKER_SECONDS + _ECHO_SECONDS) * rate) if audible else 0)
+                    self._early = self._start_early(sum(self._beep))
                     self._show(RECORDING)
+                    self._pill("listening")
+                    open_up_front_app(learning=self.watcher is not None)
                     # Reload the local model while the user is still speaking, if it was unloaded.
                     self._warm_providers()
                     if self.watcher:
                         self.watcher.finish()
                     if self.cfg["audio"]["mute_while_recording"]:
+                        # Muting at once would cut the start sound off.
+                        if audible:
+                            time.sleep(max(0.0, played + audible + _SPEAKER_SECONDS - time.monotonic()))
                         self._muted = audio.mute_output()
-                elif command == "cancel":
+                elif command == "lock":
+                    key = _KEY_LABELS.get(self._lock_key, "the key")
+                    self._pill("listening", f"hands-free · tap {key} to stop")
+                    # The recorder keeps nothing past max_seconds, so finish there.
+                    self._lock_session += 1
+                    limit = threading.Timer(
+                        self.cfg["audio"]["max_seconds"], self._hands_free_limit, args=(self._lock_session,)
+                    )
+                    limit.daemon = True
+                    limit.start()
+                elif command == "tap":
+                    self._stop_early()
                     self.recorder.stop()
                     self._restore_sound()
                     self._show(IDLE)
-                elif command == "up":
-                    clip = self.recorder.stop()
+                    self._pill("hide")
+                elif command == "cancel":
+                    self._stop_early()
+                    self.recorder.stop()
                     self._restore_sound()
+                    self._show(IDLE)
+                    self._pill("message", "Cancelled")
+                elif command == "up":
+                    if not self.recorder.recording:
+                        # The microphone never opened; its error is already showing.
+                        self._stop_early()
+                        self._restore_sound()
+                        continue
+                    early, self._early = self._early, None
+                    if early:
+                        early.stop()
+                    recording = clip = self.recorder.stop()
+                    # Where the user is when they let go is where the text belongs.
+                    place = ax.place() if self.cfg["audio"].get("guard_window", True) else None
+                    self._restore_sound()
+                    self.sounds.play("stop")
+                    # The microphone heard the start sound; Whisper must not, and it would also make
+                    # a silent clip look loud and lower the gain prepare() gives the speech.
+                    start, frames = self._beep
+                    clip = audio.cut(clip, start, start + frames)
                     length = audio.seconds(clip, self.recorder.sample_rate)
                     if length < self.cfg["audio"]["min_seconds"] or audio.peak_dbfs(clip) < _QUIET_DBFS:
                         self._show(IDLE, "Nothing heard")
+                        self._pill("message", "Nothing heard")
                         continue
-                    threading.Thread(target=self._dictate, args=(clip,), daemon=True).start()
+                    threading.Thread(
+                        target=self._dictate,
+                        args=(clip, self._prompt_key_used, early, recording, place),
+                        daemon=True,
+                    ).start()
             except Exception as e:
                 log.exception("recording failed")
+                self.sounds.play("error")
                 self._show(WARN, str(e)[:80])
+                self._pill("message", str(e)[:60], 4)
+                if command != "down":
+                    # Never leave the speakers muted after a failure.
+                    try:
+                        self._restore_sound()
+                    except Exception:
+                        log.exception("sound not restored")
+            finally:
+                self._busy = None
 
-    def _dictate(self, clip) -> None:
+    def _start_early(self, start: int) -> EarlyText | None:
+        """Starts turning speech into text during the recording, if the local model is first."""
+        seconds = self.cfg["audio"].get("chunk_seconds", 20)
+        provider = self.chain.first_ready()
+        if not seconds or provider is None or provider.name != "local":
+            return None
+        terms = self.learning.terms(self.cfg["dictionary"]["terms"])
+        return EarlyText(self.recorder, provider, terms + self.cfg["dictionary"].get("hints", []), start, seconds)
+
+    def _stop_early(self) -> None:
+        if self._early:
+            self._early.stop()
+            self._early = None
+
+    def _dictate(
+        self, clip, prompt_key: bool = False, early: EarlyText | None = None, recording=None, place=None
+    ) -> None:
         with self._paste_lock:
             self._show(BUSY)
-            start = time.perf_counter()
+            self._pill("busy")
+            self._cancelled.clear()
+            self._writing = True
             try:
-                app = front_app()
-                flac = audio.to_flac(clip, self.recorder.sample_rate)
-                terms = self.learning.terms(self.cfg["dictionary"]["terms"])
-                raw, provider = self.chain.transcribe(flac, terms)
-                heard = time.perf_counter() - start
-                # Gemini's smart mode already returns cleaned text, but it can still be in Hindi script.
-                smart = provider == "gemini" and self.cfg["stt"]["gemini"]["smart_mode"]
-                text = self.learning.apply(raw)
-                text, route = self.cleaner.clean(
-                    text, already_clean=smart, terms=terms, examples=self.learning.examples(text)
-                )
-                total = time.perf_counter() - start
-                if text:
-                    inject.paste(text)
-                    dictation_id = self.learning.record(app, raw, text)
-                    if self.watcher and dictation_id:
-                        self.watcher.watch(dictation_id, text)
-            except (SttError, inject.InjectError) as e:
-                log.warning("dictation failed: %s", e)
+                self._write(clip, prompt_key, early, recording, place)
+            finally:
+                self._writing = False
+
+    def _write(
+        self, clip, prompt_key: bool = False, early: EarlyText | None = None, recording=None, place=None
+    ) -> None:
+        """Turns the clip into text and pastes it, unless cancelled first. Nothing said is lost:
+        if the speech cannot be turned into text the audio is saved and tried again later.
+        early holds the text already made during the recording; recording is the clip before the
+        start sound was cut, which the early text's sample positions refer to. place is where the
+        user was on letting go; if they have moved since, the text is kept instead of pasted."""
+        start = time.perf_counter()
+        rate = self.recorder.sample_rate
+        target = styles.detect(self.cfg)
+        app = target.app
+        before = early.finish() if early else None
+        if before:
+            # Only the speech after the last early piece is left to hear.
+            rest = audio.prepare(recording[before[1] :], rate)
+            flac = audio.to_flac(rest, rate) if audio.seconds(rest, rate) >= self.cfg["audio"]["min_seconds"] else b""
+        else:
+            speech = audio.prepare(clip, rate)
+            if audio.seconds(speech, rate) < self.cfg["audio"]["min_seconds"]:
+                self._show(IDLE, "Nothing heard")
+                self._pill("message", "Nothing heard")
+                return
+            flac = audio.to_flac(speech, rate)
+        try:
+            raw, text, provider, route, heard = self._to_text(flac, target, prompt_key, before[0] if before else "")
+        except Exception as e:
+            log.warning("dictation failed, audio saved: %s", e)
+            if before:
+                # Save all of it, not only the part left after the early text.
+                flac = audio.to_flac(audio.prepare(clip, rate), rate)
+            self.pending.add_audio(flac, app)
+            AppHelper.callAfter(self._refresh_saved)
+            self.sounds.play("error")
+            self._show(WARN, "Could not transcribe: audio saved, trying again")
+            self._pill("message", "Couldn't transcribe. Don't worry, your audio is saved and will be tried again.", 4)
+            return
+        total = time.perf_counter() - start
+        if self._cancelled.is_set():
+            log.info("cancelled after %.1f s", total)
+            self._show(IDLE, "Cancelled")
+            return
+        if not text:
+            self._pill("hide")
+            return
+        if place is not None and not ax.same_place(place, ax.place()):
+            log.info("window changed while writing, text saved")
+            self.pending.add_text(text, raw, app)
+            AppHelper.callAfter(self._refresh_saved)
+            self._show(IDLE, f"You switched windows: {self._paste_label()} to paste")
+            self._pill("message", f"You switched windows. Press {self._paste_label()} to paste it here.", 4)
+            return
+        try:
+            inject.paste(text)
+        except inject.InjectError as e:
+            log.warning("paste failed, text saved: %s", e)
+            self.pending.add_text(text, raw, app)
+            AppHelper.callAfter(self._refresh_saved)
+            self.sounds.play("error")
+            self._show(WARN, "Could not paste: text saved")
+            self._pill("message", f"Couldn't paste. Text saved: press {self._paste_label()} to paste it.", 4)
+            return
+        dictation_id = self.learning.record(app, raw, text, "prompt" if route == "prompt" else "")
+        self.usage.add("dictations")
+        self.usage.add("words", len(text.split()))
+        self.usage.add("speaking_seconds", len(clip) / rate)
+        self.usage.add("waiting_seconds", time.perf_counter() - start)
+        if self.watcher and dictation_id:
+            self.watcher.watch(dictation_id, text)
+        log.info(
+            "%s: %.1f s audio (%.0f s heard early), %d chars, speech %.2f s, cleanup %s %.2f s, style=%s",
+            provider, len(clip) / rate, before[1] / rate if before else 0, len(text), heard, route, total - heard,
+            target.style,
+        )
+        self._show(IDLE, f"Last: {provider}, {total:.1f} s")
+        AppHelper.callAfter(self._refresh_usage)
+        if route in ("prompt-failed", "prompt-timeout"):
+            self.sounds.play("error")
+            self._pill("message", "Couldn't write the prompt: pasted plain text", 3)
+        else:
+            self._pill("hide")
+
+    def _to_text(
+        self, flac: bytes, target: styles.Target | None = None, prompt_key: bool = False, before: str = ""
+    ) -> tuple[str, str, str, str, float]:
+        """Returns (raw transcript, text to paste, provider, cleanup route, seconds to hear it).
+        target is the app the text goes into; a saved dictation has none and is written plainly.
+        prompt_key is True when the prompt-mode key was held. before is text the local model already
+        made from the start of this recording, and flac is what came after it (b"" for nothing)."""
+        start = time.perf_counter()
+        terms = self.learning.terms(self.cfg["dictionary"]["terms"])
+        raw, provider = ("", "local")
+        if flac:
+            raw, provider = self.chain.transcribe(flac, terms + self.cfg["dictionary"].get("hints", []))
+        raw = f"{before} {raw}".strip()
+        heard = time.perf_counter() - start
+        # Gemini's smart mode already returns cleaned text, but it can still be in Hindi script.
+        # Early text is always the local model's, which is raw.
+        smart = not before and provider == "gemini" and self.cfg["stt"]["gemini"]["smart_mode"]
+        text = self.learning.apply(raw)
+        app, style = (target.app, target.style) if target else ("", "default")
+        prompt_mode = self.cfg.get("prompt_mode", {})
+        rest = prompt_prefix(text, prompt_mode.get("prefixes", _PROMPT_PREFIXES)) if prompt_mode.get(
+            "use_prefix", True) else None
+        if prompt_key or rest is not None or (style == "prompt" and prompt_mode.get("in_prompt_apps", False)):
+            text = text if rest is None else rest
+            if not text.strip():
+                return raw, "", provider, "prompt", heard
+            if target:
+                self._pill("busy", "Writing prompt…")
+            text, route = self.cleaner.to_prompt(
+                text, already_clean=smart, terms=terms, examples=self.learning.examples(text, app), style=style
+            )
+        else:
+            text, route = self.cleaner.clean(
+                text, already_clean=smart, terms=terms, examples=self.learning.examples(text, app), style=style
+            )
+        return raw, text, provider, route, heard
+
+    def _paste_label(self) -> str:
+        return self.cfg["hotkey"].get("paste_saved", "").replace("<ctrl>", "⌃").replace("<alt>", "⌥").replace(
+            "<cmd>", "⌘").replace("<shift>", "⇧").replace("+", "").upper()
+
+    def _retry_saved(self) -> None:
+        """Tries saved audio again in the background, waiting longer after each failure."""
+        while True:
+            time.sleep(15)
+            # Gemini's count starts again at midnight Pacific, and the day's at midnight here.
+            AppHelper.callAfter(self._refresh_usage)
+            # Never compete with a dictation the user is making now.
+            if self._held or self._locked or self._writing:
+                continue
+            for saved in self.pending.all():
+                if saved.due(time.time()):
+                    self._try_saved(saved)
+
+    def _try_saved(self, saved: Saved) -> bool:
+        path = self.pending.audio_path(saved.id)
+        if not path.exists():
+            self.pending.remove(saved.id)
+            return False
+        try:
+            with self._paste_lock:
+                raw, text, provider, _, _ = self._to_text(path.read_bytes())
+        except Exception as e:
+            self.pending.tried(saved)
+            log.info("saved dictation %s still failing (try %d): %s", saved.id, saved.tries, str(e)[:120])
+            AppHelper.callAfter(self._refresh_saved)
+            return False
+        if not text:
+            self.pending.remove(saved.id)
+        else:
+            self.pending.tried(saved, text, raw)
+            log.info("saved dictation %s transcribed by %s", saved.id, provider)
+            self._show(IDLE, f"Saved dictation ready: {self._paste_label()} to paste")
+            self._pill("message", f"Your saved dictation is ready. Press {self._paste_label()} to paste it.", 5)
+        AppHelper.callAfter(self._refresh_saved)
+        return bool(text)
+
+    def _paste_oldest_saved(self) -> None:
+        ready = [saved for saved in self.pending.all() if saved.ready]
+        if ready:
+            self._paste_saved(ready[0])
+        else:
+            self._pill("message", "No saved dictation is ready")
+
+    def _paste_saved(self, saved: Saved) -> None:
+        """Main thread. Pastes a ready saved dictation where the cursor is, then forgets it."""
+
+        def paste():
+            # Let the menu close and the keyboard go back to the app first.
+            time.sleep(0.3)
+            try:
+                with self._paste_lock:
+                    inject.paste(saved.text)
+            except inject.InjectError as e:
                 self._show(WARN, str(e)[:80])
                 return
-            log.info(
-                "%s: %.1f s audio, %d chars, speech %.2f s, cleanup %s %.2f s",
-                provider, len(clip) / self.recorder.sample_rate, len(text), heard, route, total - heard,
-            )
-            self._show(IDLE, f"Last: {provider}, {total:.1f} s")
+            self.pending.remove(saved.id)
+            self.learning.record(saved.app, saved.raw, saved.text)
+            AppHelper.callAfter(self._refresh_saved)
 
+        threading.Thread(target=paste, daemon=True).start()
+
+    def _refresh_saved(self) -> None:
+        """Rebuilds the "Saved dictations" menu. Main thread only."""
+        for title in list(self.saved.keys()):
+            del self.saved[title]
+        items = self.pending.all()
+        waiting = sum(not saved.ready for saved in items)
+        ready = len(items) - waiting
+        self.saved.title = "Saved dictations" + (f" ({ready} ready)" if ready else f" ({waiting})" if waiting else "")
+        if not items:
+            self.saved.add(rumps.MenuItem("Nothing saved: every dictation went through"))
+        for saved in reversed(items):
+            when = time.strftime("%H:%M", time.localtime(saved.created))
+            if saved.ready:
+                preview = saved.text[:40] + ("…" if len(saved.text) > 40 else "")
+                entry = rumps.MenuItem(f"{when} · {saved.app or 'unknown app'} · {preview}")
+                entry.add(rumps.MenuItem("Paste at cursor", callback=lambda _, x=saved: self._paste_saved(x)))
+                entry.add(rumps.MenuItem("Copy", callback=lambda _, x=saved: inject.copy(x.text)))
+            else:
+                tries = f"tried {saved.tries}×" if saved.tries else "waiting"
+                entry = rumps.MenuItem(f"{when} · {saved.app or 'unknown app'} · audio saved, {tries}")
+                entry.add(
+                    rumps.MenuItem(
+                        "Try now",
+                        callback=lambda _, x=saved: threading.Thread(
+                            target=self._try_saved, args=(x,), daemon=True
+                        ).start(),
+                    )
+                )
+            entry.add(rumps.MenuItem("Delete", callback=lambda _, x=saved: self._delete_saved(x)))
+            self.saved.add(entry)
+
+    def _delete_saved(self, saved: Saved) -> None:
+        self.pending.remove(saved.id)
+        self._refresh_saved()
 
 def only_copy():
     """Holds a lock for as long as the app runs. None when another copy already has it."""
@@ -411,7 +925,7 @@ def main() -> None:
     # Two copies would both answer the key and paste the text twice.
     lock = only_copy()
     if lock is None:
-        sys.exit("Flow Backup is already running (look for its icon in the menu bar).")
+        sys.exit("Bolo is already running (look for its icon in the menu bar).")
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s", datefmt="%H:%M:%S")
     logging.getLogger("httpx").setLevel(logging.WARNING)
     # Menu bar only: no Dock icon.
