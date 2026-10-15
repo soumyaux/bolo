@@ -256,7 +256,8 @@ class FlowApp(rumps.App):
         self._writing = False
         self._cancelled = threading.Event()
         self.overlay = Overlay(lambda: self.recorder.level, self._cancel)
-        self._muted = False
+        # The output device Bolo muted, or 0 when it muted none.
+        self._muted = 0
         self.sounds = sounds.Sounds(cfg)
         # Where the start sound is in the clip being recorded: (first sample, samples to cut).
         self._beep = (0, 0)
@@ -556,8 +557,8 @@ class FlowApp(rumps.App):
 
     def _restore_sound(self) -> None:
         if self._muted:
-            self._muted = False
-            audio.unmute_output()
+            device, self._muted = self._muted, 0
+            audio.unmute_output(device)
 
     def _worker(self) -> None:
         try:
@@ -652,9 +653,15 @@ class FlowApp(rumps.App):
                     ).start()
             except Exception as e:
                 log.exception("recording failed")
+                if command == "down" and self.recorder.recording:
+                    # The microphone is on, so the dictation still works; only a side step failed.
+                    self._show(RECORDING)
+                    self._pill("listening")
+                    continue
                 self.sounds.play("error")
-                self._show(WARN, str(e)[:80])
-                self._pill("message", str(e)[:60], 4)
+                problem = str(e) if isinstance(e, audio.MicError) else "Something went wrong. Details are in Bolo.log"
+                self._show(WARN, problem[:80])
+                self._pill("message", problem[:60], 4)
                 if command != "down":
                     # Never leave the speakers muted after a failure.
                     try:

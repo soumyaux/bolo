@@ -3,7 +3,6 @@
 import ctypes
 import io
 import logging
-import subprocess
 import threading
 import time
 
@@ -46,21 +45,33 @@ class _Address(ctypes.Structure):
     _fields_ = [("selector", ctypes.c_uint32), ("scope", ctypes.c_uint32), ("element", ctypes.c_uint32)]
 
 
-def default_input_id() -> int:
-    """Core Audio's id for the Mac's current input device, or 0 when it cannot be read. A headset
-    that connects or reconnects gets a new id."""
+# Core Audio's four-letter codes: 'dIn ', 'dOut', 'glob', 'outp' and 'mute'.
+_DEFAULT_INPUT, _DEFAULT_OUTPUT = 0x64496E20, 0x644F7574
+_GLOBAL, _OUTPUT, _MUTE = 0x676C6F62, 0x6F757470, 0x6D757465
+
+
+def _core_audio():
+    return ctypes.CDLL("/System/Library/Frameworks/CoreAudio.framework/CoreAudio")
+
+
+def _default_device(selector: int) -> int:
+    """Core Audio's id for the Mac's current input or output device, or 0 when it cannot be read."""
     try:
-        core = ctypes.CDLL("/System/Library/Frameworks/CoreAudio.framework/CoreAudio")
-        # kAudioHardwarePropertyDefaultInputDevice 'dIn ', kAudioObjectPropertyScopeGlobal 'glob'.
-        address = _Address(0x64496E20, 0x676C6F62, 0)
+        address = _Address(selector, _GLOBAL, 0)
         device, size = ctypes.c_uint32(0), ctypes.c_uint32(4)
         # kAudioObjectSystemObject is 1.
-        error = core.AudioObjectGetPropertyData(
+        error = _core_audio().AudioObjectGetPropertyData(
             1, ctypes.byref(address), 0, None, ctypes.byref(size), ctypes.byref(device)
         )
         return device.value if error == 0 else 0
     except OSError:
         return 0
+
+
+def default_input_id() -> int:
+    """Core Audio's id for the Mac's current input device, or 0 when it cannot be read. A headset
+    that connects or reconnects gets a new id."""
+    return _default_device(_DEFAULT_INPUT)
 
 
 class Recorder:
@@ -192,19 +203,43 @@ class Recorder:
         return np.concatenate(chunks)[:, 0]
 
 
-def mute_output() -> bool:
-    """Mutes the Mac's speakers. Returns True if sound was on before, so the caller should undo it."""
-    script = (
-        "set wasMuted to output muted of (get volume settings)\n"
-        "set volume output muted true\n"
-        "return wasMuted"
-    )
-    result = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=3)
-    return result.returncode == 0 and result.stdout.strip() == "false"
+def _set_mute(device: int, on: bool) -> bool:
+    address = _Address(_MUTE, _OUTPUT, 0)
+    value = ctypes.c_uint32(1 if on else 0)
+    return _core_audio().AudioObjectSetPropertyData(device, ctypes.byref(address), 0, None, 4, ctypes.byref(value)) == 0
 
 
-def unmute_output() -> None:
-    subprocess.run(["osascript", "-e", "set volume output muted false"], capture_output=True, timeout=3)
+def mute_output() -> int:
+    """Mutes the Mac's speakers through Core Audio, which answers at once (AppleScript could take
+    seconds). Returns the device it muted, for unmute_output, or 0 when nothing was changed: sound
+    was already off, or the device has no mute switch. Never raises."""
+    try:
+        device = _default_device(_DEFAULT_OUTPUT)
+        if not device:
+            return 0
+        address = _Address(_MUTE, _OUTPUT, 0)
+        muted, size = ctypes.c_uint32(0), ctypes.c_uint32(4)
+        error = _core_audio().AudioObjectGetPropertyData(
+            device, ctypes.byref(address), 0, None, ctypes.byref(size), ctypes.byref(muted)
+        )
+        if error:
+            log.info("the speakers have no mute switch (Core Audio error %d); sound is left on", error)
+            return 0
+        if muted.value or not _set_mute(device, True):
+            return 0
+        return device
+    except OSError as e:
+        log.warning("speakers not muted: %s", e)
+        return 0
+
+
+def unmute_output(device: int) -> None:
+    """Undoes mute_output on the device it muted, even if the Mac has since switched to another."""
+    try:
+        if device and not _set_mute(device, False):
+            log.warning("speakers not unmuted")
+    except OSError as e:
+        log.warning("speakers not unmuted: %s", e)
 
 
 def seconds(audio: np.ndarray, sample_rate: int = 16000) -> float:
