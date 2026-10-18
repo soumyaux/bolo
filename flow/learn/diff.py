@@ -2,6 +2,7 @@
 
 import re
 from difflib import SequenceMatcher
+from pathlib import Path
 from typing import NamedTuple
 
 _EDGE = ".,!?;:\"'()[]{}"
@@ -10,6 +11,20 @@ _MAX_WORDS = 3
 # Above this share of reworded words the sentence was rewritten, and nothing is learned from it.
 _REWRITE_SHARE = 0.3
 _NAME = re.compile(r"[A-Z0-9_./-]")
+# Ordinary English words, to tell a real word from a typo or a mis-hearing.
+_ENGLISH_WORDS = Path("/usr/share/dict/words")
+_english: set[str] | None = None
+
+
+def english(word: str) -> bool:
+    """True for an ordinary English word."""
+    global _english
+    if _english is None:
+        try:
+            _english = set(_ENGLISH_WORDS.read_text().lower().split())
+        except OSError:
+            _english = set()
+    return word.lower() in _english
 
 
 class Swap(NamedTuple):
@@ -21,7 +36,13 @@ class Swap(NamedTuple):
 
     @property
     def trusted(self) -> bool:
-        return self.name or sounds_alike(self.heard, self.intended)
+        if self.name:
+            return True
+        if not sounds_alike(self.heard, self.intended):
+            return False
+        # A real word "corrected" to a non-word is more likely a typo ("button" to "buttom").
+        real = lambda text: all(english(w) for w in re.findall(r"[\w']+", text))
+        return real(self.intended) or not real(self.heard)
 
 
 class _Word(NamedTuple):

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import httpx
 
-from .learn.diff import distance, letters, sound_key
+from .learn.diff import distance, english, letters, sound_key
 
 log = logging.getLogger(__name__)
 
@@ -23,8 +23,6 @@ _REPEAT = re.compile(r"\b(\w+)(\s+\1\b)+", re.IGNORECASE)
 # A phrase of 2 to 4 words said twice in a row: "convert on, convert on".
 _REPEAT_PHRASE = re.compile(r"\b(\w+(?:[\s,]+\w+){1,3})(?:[\s,]+\1\b)+", re.IGNORECASE)
 _WORD_RUN = re.compile(r"[\w'-]+")
-# Ordinary English words, so a sound-alike match never turns a real word into a dictionary term.
-_ENGLISH_WORDS = Path("/usr/share/dict/words")
 _NEW_PARAGRAPH = re.compile(r"[,.]?\s*\bnew paragraph\b[,.]?\s*", re.IGNORECASE)
 _NEW_LINE = re.compile(r"[,.]?\s*\bnew line\b[,.]?\s*", re.IGNORECASE)
 _SENTENCE_START = re.compile(r"(^|[.!?]\s+|\n)([a-z])")
@@ -111,19 +109,6 @@ Earlier transcripts from this speaker and how they wanted each one written. Matc
 _EXAMPLE = "\n<example>\n<transcript>\n{raw}\n</transcript>\n<wanted>\n{final}\n</wanted>\n</example>"
 
 
-_english: set[str] | None = None
-
-
-def _is_english(word: str) -> bool:
-    global _english
-    if _english is None:
-        try:
-            _english = set(_ENGLISH_WORDS.read_text().lower().split())
-        except OSError:
-            _english = set()
-    return word.lower() in _english
-
-
 def _sound_alike_terms(text: str, terms: list[str]) -> str:
     """Writes a dictionary term where speech recognition wrote something that sounds like it:
     "impact UI" for "impact-ui", "Hinglis" for "Hinglish", "Wisper Flow" for "Wispr Flow". A
@@ -147,7 +132,7 @@ def _sound_alike_terms(text: str, terms: list[str]) -> str:
                 said = text[group[0].start() : group[-1].end()]
                 got = letters(said)
                 same = got == want or (
-                    not all(_is_english(w.group()) for w in group)
+                    not all(english(w.group()) for w in group)
                     and sound_key(said) == key
                     and distance(got, want) <= max(1, len(want) // 4)
                 )
@@ -286,6 +271,10 @@ class Cleaner:
                 try:
                     # A request without a prompt only loads the model.
                     self._client.post("/api/generate", json={"model": model, "keep_alive": _KEEP_ALIVE}, timeout=60)
+                except httpx.ConnectError:
+                    # The server stopped: start it again, for the next dictation.
+                    start_ollama(str(self._client.base_url).rstrip("/"))
+                    return
                 except httpx.HTTPError as e:
                     log.info("cleanup model %s not warmed: %s", model, type(e).__name__)
 
