@@ -267,8 +267,9 @@ class Cleaner:
         self.terms = cfg["dictionary"]["terms"]
         self.hints = cfg["dictionary"].get("hints", [])
         self.prompt_timeout = prompt_mode.get("timeout_seconds", 5)
-        self._failures = 0
-        self._rest_until = 0.0
+        # Failures in a row and rest end, per model: a slow prompt model must not stop the cleanup.
+        self._failures: dict[str, int] = {}
+        self._rest_until: dict[str, float] = {}
         self._client = None
         if self.enabled and cleanup.get("provider", "ollama") == "ollama":
             # Ollama runs on this Mac. trust_env=False keeps any proxy (and the company web filter) out.
@@ -299,14 +300,14 @@ class Cleaner:
 
         threading.Thread(target=load, daemon=True).start()
 
-    def _resting(self) -> bool:
-        return time.monotonic() < self._rest_until
+    def _resting(self, model: str) -> bool:
+        return time.monotonic() < self._rest_until.get(model, 0)
 
-    def _failed(self) -> None:
-        self._failures += 1
-        if self._failures >= _FAILURES_TO_REST and not self._resting():
-            self._rest_until = time.monotonic() + _REST_SECONDS
-            log.warning("cleanup LLM failed %d times in a row; skipping it for %d min", self._failures, _REST_SECONDS // 60)
+    def _failed(self, model: str) -> None:
+        failures = self._failures[model] = self._failures.get(model, 0) + 1
+        if failures >= _FAILURES_TO_REST and not self._resting(model):
+            self._rest_until[model] = time.monotonic() + _REST_SECONDS
+            log.warning("%s failed %d times in a row; skipping it for %d min", model, failures, _REST_SECONDS // 60)
 
     def _llm(self, text: str, terms: list[str], examples: list[tuple[str, str]], style: str) -> str:
         system = _SYSTEM.format(
@@ -321,11 +322,12 @@ class Cleaner:
         return self._ask(system, text)
 
     def _ask(self, system: str, text: str, timeout: float | None = None, model: str | None = None) -> str:
+        model = model or self.model
         try:
             response = self._client.post(
                 "/api/chat",
                 json={
-                    "model": model or self.model,
+                    "model": model,
                     "messages": [
                         {"role": "system", "content": system},
                         {"role": "user", "content": f"<transcript>\n{text}\n</transcript>"},
@@ -339,9 +341,9 @@ class Cleaner:
             response.raise_for_status()
             answer = response.json()["message"]["content"].strip()
         except (httpx.HTTPError, KeyError, ValueError):
-            self._failed()
+            self._failed(model)
             raise
-        self._failures = 0
+        self._failures[model] = 0
         return answer
 
     def clean(
@@ -364,7 +366,7 @@ class Cleaner:
         styled = style in _STYLES and len(text.split()) > _SHORT_WORDS
         if not self.enabled or self._client is None or not (wanted or styled):
             return text, "fast"
-        if self._resting():
+        if self._resting(self.model):
             return text, "llm-skipped"
         try:
             cleaned = self._llm(text, terms, examples or [], style)
@@ -401,7 +403,7 @@ class Cleaner:
             return self.clean(raw, already_clean, terms, examples, style)[0]
 
         text = raw.strip() if already_clean else tidy(raw, terms)
-        if not self.enabled or self._client is None or self._resting():
+        if not self.enabled or self._client is None or self._resting(self.prompt_model):
             return normally(), "prompt-failed"
         system = _PROMPT.format(terms=", ".join(terms) or "none", hints=", ".join(self.hints) or "none")
         try:
