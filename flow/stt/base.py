@@ -1,10 +1,12 @@
 """Shared interface for speech providers."""
 
+import io
 import re
 import zlib
 from typing import Protocol
 
 import httpx
+import soundfile as sf
 
 
 class SttError(Exception):
@@ -31,6 +33,11 @@ class Provider(Protocol):
     name: str
 
     def transcribe(self, flac: bytes, vocabulary: list[str] | None = None) -> str: ...
+
+
+def flac_seconds(flac: bytes) -> float:
+    """How long a FLAC clip is, read from its header."""
+    return sf.info(io.BytesIO(flac)).duration
 
 
 def blocked_by_network(response: httpx.Response) -> bool:

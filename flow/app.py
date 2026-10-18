@@ -33,7 +33,7 @@ from .learn.voice import Voice
 from .overlay import Overlay
 from .pending import Pending, Saved
 from .settings_window import SettingsWindow
-from .stt.base import BadResult, RateLimited, SttError, Unavailable
+from .stt.base import BadResult, RateLimited, SttError, Unavailable, flac_seconds
 from .stt.groq import GroqWhisper
 from .stt.local_whisper import LocalWhisper
 
@@ -160,7 +160,11 @@ class Chain:
 
     def transcribe(self, flac: bytes, vocabulary: list[str]) -> tuple[str, str]:
         errors = []
-        for provider in self._ready() or self.providers:
+        ready = self._ready() or self.providers
+        # A provider can pass on a clip (Groq: too short, or near its free limit) while another can take it.
+        seconds = flac_seconds(flac)
+        ready = [p for p in ready if getattr(p, "takes", lambda _: True)(seconds)] or ready
+        for provider in ready:
             try:
                 return provider.transcribe(flac, vocabulary), provider.name
             except RateLimited as e:
@@ -190,6 +194,9 @@ def build_providers(cfg: dict) -> list:
                     model=groq.get("model", "whisper-large-v3"),
                     language=groq.get("language", ""),
                     timeout=cfg["stt"]["timeout_seconds"],
+                    local_under=groq.get("local_under_seconds", 0),
+                    saving_from=groq.get("saving_from", 0.7),
+                    usage_file=LEARNING_DB.parent / "groq_usage.json",
                 )
             )
         elif name == "local":

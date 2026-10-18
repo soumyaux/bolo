@@ -22,10 +22,10 @@ mute_while_recording = true
 # Double-tap the talk key to keep recording without holding it; tap it once more to finish.
 # Recording stops by itself at max_seconds.
 hands_free = true
-# For long dictations: every this many seconds of speech, what you said so far is turned into text,
-# cut at a pause, so the text is ready about 1 s after you let go. 0 = off. Groq's free tier allows
-# 20 requests a minute and bills each as at least 10 s of audio (7200 s an hour): 6 s pieces fit.
-chunk_seconds = 6
+# For long dictations: once this many seconds of speech are in, what you said so far is turned into
+# text, cut at the next pause, so the text is ready about 1 s after you let go. 0 = off. Groq bills
+# every request as at least 10 s of audio, so 10 s pieces waste none of its free time.
+chunk_seconds = 10
 # If you switch to another app or window while Bolo is still writing, the text is kept instead of
 # pasted into the wrong place; press paste_saved (⌃⌥V) where you want it.
 guard_window = true
@@ -56,6 +56,12 @@ timeout_seconds = 4
 
 [stt.groq]
 model = "whisper-large-v3"
+# Saving mode starts once this share of Groq's daily free limit is used (0.7 = 70%). Then clips
+# shorter than local_under_seconds go to the local model (Groq bills them as 10 s anyway), and a
+# nonsense Groq result goes to the local model instead of being asked of Groq again.
+# Below it, every clip goes to Groq for the best accuracy.
+saving_from = 0.7
+local_under_seconds = 4
 # "" picks the language per clip, which keeps Hindi as Hindi. "en" for English only.
 language = ""
 

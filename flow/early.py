@@ -50,7 +50,8 @@ class EarlyText:
             samples = self._recorder.snapshot(self._take, self.done)
             if len(samples) < self._piece:
                 continue
-            at = audio.pause_at(samples, self._rate, after=max(0, len(samples) - self._search))
+            # Cut at the first pause after a full piece: Groq bills a shorter piece as 10 s anyway.
+            at = audio.pause_at(samples, self._rate, after=max(self._piece, len(samples) - self._search))
             if at is None:
                 if len(samples) < _LONGEST_SECONDS * self._rate:
                     continue
