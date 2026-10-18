@@ -22,9 +22,10 @@ mute_while_recording = true
 # Double-tap the talk key to keep recording without holding it; tap it once more to finish.
 # Recording stops by itself at max_seconds.
 hands_free = true
-# For long dictations: every this many seconds of speech, the local model starts writing what you
-# said so far, cutting at a pause, so the text is ready about 1 s after you let go. 0 = off.
-chunk_seconds = 20
+# For long dictations: every this many seconds of speech, what you said so far is turned into text,
+# cut at a pause, so the text is ready about 1 s after you let go. 0 = off. Groq's free tier allows
+# 20 requests a minute and bills each as at least 10 s of audio (7200 s an hour): 6 s pieces fit.
+chunk_seconds = 6
 # If you switch to another app or window while Bolo is still writing, the text is kept instead of
 # pasted into the wrong place; press paste_saved (⌃⌥V) where you want it.
 guard_window = true
@@ -46,12 +47,17 @@ keep_hours = 24
 
 [stt]
 # Tried in order. A failure, a 429 or a timeout moves to the next one.
+# "groq" is Whisper large-v3 on Groq's free tier (needs GROQ_API_KEY in .env); it is checked every
+# 30 s and on network changes, and skipped at once while it cannot be reached (offline, web filter).
 # "local" runs on this Mac: fast, no limit, no internet.
-order = ["local"]
+order = ["groq", "local"]
+# Groq's time limit for a request, plus a little per second of audio.
 timeout_seconds = 4
 
 [stt.groq]
 model = "whisper-large-v3"
+# "" picks the language per clip, which keeps Hindi as Hindi. "en" for English only.
+language = ""
 
 [stt.local]
 model = "mlx-community/whisper-large-v3-turbo"
@@ -59,7 +65,8 @@ model = "mlx-community/whisper-large-v3-turbo"
 # cleanup pass rewrites it in Roman letters. Use ["en"] for English only.
 languages = ["en", "hi"]
 # The model uses about 2 GB of memory while loaded; it is freed after this much idle time.
-unload_after_idle_minutes = 10
+# Reloading takes about 4 s, so it stays loaded a while as the fallback for Groq.
+unload_after_idle_minutes = 30
 
 [cleanup]
 enabled = true

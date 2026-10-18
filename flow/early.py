@@ -6,6 +6,7 @@ user waiting about 9 s after letting go. Pieces are cut at pauses, so no word is
 
 import logging
 import threading
+from collections.abc import Callable
 
 from . import audio
 
@@ -13,20 +14,30 @@ log = logging.getLogger(__name__)
 
 # Never wait longer than this for a pause; Whisper hears at most 30 s at once.
 _LONGEST_SECONDS = 28
-# Pauses are looked for in this last stretch of a piece, so pieces stay near the wanted length.
+# Pauses are looked for in this last stretch of a piece (at most its second half), so pieces stay
+# near the wanted length.
 _SEARCH_SECONDS = 6
 
 
 class EarlyText:
-    """Runs from key down to key up. start is the first sample to use, after the start sound."""
+    """Runs from key down to key up. start is the first sample to use, after the start sound.
+    transcribe takes (FLAC, vocabulary) and returns (text, provider name), as Chain.transcribe does."""
 
-    def __init__(self, recorder: audio.Recorder, provider, vocabulary: list[str], start: int, seconds: float):
+    def __init__(
+        self,
+        recorder: audio.Recorder,
+        transcribe: Callable[[bytes, list[str]], tuple[str, str]],
+        vocabulary: list[str],
+        start: int,
+        seconds: float,
+    ):
         self._recorder = recorder
-        self._provider = provider
+        self._transcribe = transcribe
         self._vocabulary = vocabulary
         self._take = recorder.take
         self._rate = recorder.sample_rate
         self._piece = int(seconds * self._rate)
+        self._search = int(min(_SEARCH_SECONDS, seconds / 2) * self._rate)
         self.done = start
         self.texts: list[str] = []
         self.failed = False
@@ -39,16 +50,16 @@ class EarlyText:
             samples = self._recorder.snapshot(self._take, self.done)
             if len(samples) < self._piece:
                 continue
-            at = audio.pause_at(samples, self._rate, after=max(0, len(samples) - _SEARCH_SECONDS * self._rate))
+            at = audio.pause_at(samples, self._rate, after=max(0, len(samples) - self._search))
             if at is None:
                 if len(samples) < _LONGEST_SECONDS * self._rate:
                     continue
                 # No pause for half a minute: cut at the quietest moment of the last few seconds.
-                at = audio.quietest(samples, self._rate, after=len(samples) - _SEARCH_SECONDS * self._rate)
+                at = audio.quietest(samples, self._rate, after=len(samples) - self._search)
             speech = audio.prepare(samples[:at], self._rate)
             if audio.seconds(speech, self._rate) >= 0.3:
                 try:
-                    text = self._provider.transcribe(audio.to_flac(speech, self._rate), self._vocabulary)
+                    text, _ = self._transcribe(audio.to_flac(speech, self._rate), self._vocabulary)
                 except Exception as e:
                     # The whole clip is then turned into text the normal way, so nothing is lost.
                     log.warning("early transcription failed, the whole clip will be used: %s", str(e)[:120])

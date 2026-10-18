@@ -1,5 +1,7 @@
 """Shared interface for speech providers."""
 
+import re
+import zlib
 from typing import Protocol
 
 import httpx
@@ -52,3 +54,24 @@ def raise_for_status(name: str, response: httpx.Response) -> None:
     if response.status_code in (401, 403):
         raise Unavailable(f"{name}: key rejected (HTTP {response.status_code}): {detail}")
     raise Unavailable(f"{name}: HTTP {response.status_code}: {detail}")
+
+
+_WORD = re.compile(r"\w+")
+
+
+def broken(text: str, prompt: str) -> str:
+    """Why a transcript is nonsense, or "" when it looks like real speech."""
+    words = _WORD.findall(text.lower())
+    if not words:
+        return ""
+    # Whisper stuck in a loop: "1 1 1 1 1" or the same phrase over and over.
+    if len(text) >= 40 and len(text) / len(zlib.compress(text.encode())) > 2.4:
+        return "repeats itself"
+    if re.search(r"\b(\w+)(?:\W+\1\b){5}", text.lower()):
+        return "repeats itself"
+    # Whisper read the prompt back instead of hearing speech: four prompt words in the prompt's order.
+    said = " " + " ".join(words) + " "
+    listed = _WORD.findall(prompt.lower())
+    if any(" " + " ".join(listed[i : i + 4]) + " " in said for i in range(len(listed) - 3)):
+        return "repeats the glossary"
+    return ""

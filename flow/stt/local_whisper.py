@@ -3,42 +3,19 @@
 import io
 import logging
 import os
-import re
 import threading
 import time
-import zlib
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import soundfile as sf
 
-from .base import BadResult, Unavailable
+from .base import BadResult, Unavailable, broken
 
 # The model is already downloaded; never contact Hugging Face while the app runs.
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 log = logging.getLogger(__name__)
-
-_WORD = re.compile(r"\w+")
-
-
-def _broken(text: str, prompt: str) -> str:
-    """Why a transcript is nonsense, or "" when it looks like real speech."""
-    words = _WORD.findall(text.lower())
-    if not words:
-        return ""
-    # Whisper stuck in a loop: "1 1 1 1 1" or the same phrase over and over.
-    if len(text) >= 40 and len(text) / len(zlib.compress(text.encode())) > 2.4:
-        return "repeats itself"
-    if re.search(r"\b(\w+)(?:\W+\1\b){5}", text.lower()):
-        return "repeats itself"
-    # Whisper read the prompt back instead of hearing speech: four prompt words in the prompt's order.
-    said = " " + " ".join(words) + " "
-    listed = _WORD.findall(prompt.lower())
-    if any(" " + " ".join(listed[i : i + 4]) + " " in said for i in range(len(listed) - 3)):
-        return "repeats the glossary"
-    return ""
-
 
 class LocalWhisper:
     name = "local"
@@ -47,7 +24,7 @@ class LocalWhisper:
         self,
         model: str = "mlx-community/whisper-large-v3-turbo",
         languages: list[str] | None = None,
-        unload_after_idle_minutes: float = 10,
+        unload_after_idle_minutes: float = 30,
     ):
         self.model = model
         # One language is used as given. With several, each clip uses the one that fits best.
@@ -125,11 +102,11 @@ class LocalWhisper:
         # A plain list, without a label: a label like "Glossary:" was read back as speech.
         prompt = ", ".join(dict.fromkeys(vocabulary or [])) + "." if vocabulary else ""
         text = self._decode(samples, prompt)
-        reason = _broken(text, prompt)
+        reason = broken(text, prompt)
         if reason and prompt:
             # Try once more without the prompt, which is often what it got stuck on.
             text = self._decode(samples, "")
-            reason = _broken(text, "")
+            reason = broken(text, "")
         if reason:
             raise BadResult(f"{self.name}: transcript {reason}: {text[:60]!r}")
         return text

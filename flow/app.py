@@ -32,6 +32,7 @@ from .overlay import Overlay
 from .pending import Pending, Saved
 from .settings_window import SettingsWindow
 from .stt.base import BadResult, RateLimited, SttError, Unavailable
+from .stt.groq import GroqWhisper
 from .stt.local_whisper import LocalWhisper
 
 log = logging.getLogger("flow")
@@ -138,32 +139,39 @@ def parse_shortcut(text: str) -> tuple[int, int] | None:
 
 
 class Chain:
-    """Tries providers in order and rests one that failed while another can answer."""
+    """Tries providers in order and rests one that failed while another can answer. A provider
+    with its own reachability check (Groq) is skipped at once while it is known to be down."""
 
     def __init__(self, providers: list):
         self.providers = providers
         self._rest_until: dict[str, float] = {}
 
+    def _ready(self) -> list:
+        now = time.monotonic()
+        return [
+            p for p in self.providers if now >= self._rest_until.get(p.name, 0) and getattr(p, "available", True)
+        ]
+
     def first_ready(self):
         """The provider that would be tried first now, or None."""
-        now = time.monotonic()
-        ready = [p for p in self.providers if now >= self._rest_until.get(p.name, 0)]
-        return (ready or self.providers or [None])[0]
+        return (self._ready() or self.providers or [None])[0]
 
     def transcribe(self, flac: bytes, vocabulary: list[str]) -> tuple[str, str]:
-        now = time.monotonic()
-        ready = [p for p in self.providers if now >= self._rest_until.get(p.name, 0)]
         errors = []
-        for provider in ready or self.providers:
+        for provider in self._ready() or self.providers:
             try:
                 return provider.transcribe(flac, vocabulary), provider.name
             except RateLimited as e:
-                self._rest_until[provider.name] = now + (e.retry_after or 60)
+                self._rest_until[provider.name] = time.monotonic() + (e.retry_after or 60)
                 errors.append(str(e))
             except BadResult as e:
                 errors.append(str(e))
             except Unavailable as e:
-                self._rest_until[provider.name] = now + 30
+                if hasattr(provider, "went_down"):
+                    # Its own check brings it back as soon as it answers again.
+                    provider.went_down()
+                else:
+                    self._rest_until[provider.name] = time.monotonic() + 30
                 errors.append(str(e))
             log.warning("%s", errors[-1])
         raise Unavailable("; ".join(errors) or "no speech provider is set up")
@@ -172,7 +180,17 @@ class Chain:
 def build_providers(cfg: dict) -> list:
     providers = []
     for name in cfg["stt"]["order"]:
-        if name == "local":
+        if name == "groq" and config.key("GROQ_API_KEY"):
+            groq = cfg["stt"].get("groq", {})
+            providers.append(
+                GroqWhisper(
+                    config.key("GROQ_API_KEY"),
+                    model=groq.get("model", "whisper-large-v3"),
+                    language=groq.get("language", ""),
+                    timeout=cfg["stt"]["timeout_seconds"],
+                )
+            )
+        elif name == "local":
             local = cfg["stt"]["local"]
             providers.append(
                 LocalWhisper(local["model"], local["languages"], local["unload_after_idle_minutes"])
@@ -669,13 +687,14 @@ class FlowApp(rumps.App):
                 self._busy = None
 
     def _start_early(self, start: int) -> EarlyText | None:
-        """Starts turning speech into text during the recording, if the local model is first."""
-        seconds = self.cfg["audio"].get("chunk_seconds", 20)
-        provider = self.chain.first_ready()
-        if not seconds or provider is None or provider.name != "local":
+        """Starts turning speech into text during the recording. Pieces go through the chain, so
+        Groq hears them while it can, and a rate limit sends the rest to the local model."""
+        seconds = self.cfg["audio"].get("chunk_seconds", 6)
+        if not seconds or not self.chain.providers:
             return None
         terms = self.learning.terms(self.cfg["dictionary"]["terms"])
-        return EarlyText(self.recorder, provider, terms + self.cfg["dictionary"].get("hints", []), start, seconds)
+        vocabulary = terms + self.cfg["dictionary"].get("hints", [])
+        return EarlyText(self.recorder, self.chain.transcribe, vocabulary, start, seconds)
 
     def _stop_early(self) -> None:
         if self._early:

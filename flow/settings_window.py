@@ -295,7 +295,7 @@ class SettingsWindow:
             self._choose(self._sound_popups[kind], get("sounds", kind, default) or _NO_SOUND)
         self._cleanup.setState_(get("cleanup", "enabled", True))
         self._learning.setState_(get("learning", "auto_capture", True))
-        self._early.setState_(bool(get("audio", "chunk_seconds", 20)))
+        self._early.setState_(bool(get("audio", "chunk_seconds", 6)))
         self._guard.setState_(get("audio", "guard_window", True))
         self._terms.setString_("\n".join(get("dictionary", "terms", [])))
         self._hints.setString_("\n".join(get("dictionary", "hints", [])))
@@ -354,7 +354,7 @@ class SettingsWindow:
         self._read_styles()
         lines = lambda box: [line.strip() for line in str(box.string()).splitlines() if line.strip()]  # noqa: E731
         sound = lambda kind: "" if (t := str(self._sound_popups[kind].titleOfSelectedItem())) == _NO_SOUND else t  # noqa: E731
-        old_chunk = self._cfg.get("audio", {}).get("chunk_seconds", 20) or 20
+        old_chunk = self._cfg.get("audio", {}).get("chunk_seconds", 6) or 6
         old_apps = self._cfg.get("styles", {}).get("apps", {})
         return {
             ("hotkey", "push_to_talk"): talk,
