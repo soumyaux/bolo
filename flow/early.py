@@ -1,8 +1,7 @@
 """Turns a long dictation into text piece by piece while the user is still speaking.
 
 Whisper takes about 1 s for each 20 s of speech, so a 3-minute ramble would otherwise keep the
-user waiting about 9 s after letting go. Pieces are cut at pauses, so no word is split, and only
-the local model is used: the Gemini free tier allows too few requests for this.
+user waiting about 9 s after letting go. Pieces are cut at pauses, so no word is split.
 """
 
 import logging

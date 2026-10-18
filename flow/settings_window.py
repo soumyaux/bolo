@@ -190,7 +190,7 @@ class SettingsWindow:
             self._sound_popups[kind] = self._popup(view, choices, y, width=140, action="soundChosen:")
         y -= _ROW + 8
         self._label(view, "Writing", y)
-        self._cleanup = self._check(view, "Clean up with Gemini (styles, lists, Hinglish)", y)
+        self._cleanup = self._check(view, "Clean up on this Mac (styles, lists, Hinglish)", y)
         y -= _ROW
         self._learning = self._check(view, "Learn from my edits automatically", y)
         y -= _ROW

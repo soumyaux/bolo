@@ -1,10 +1,9 @@
 """Speak your real prompts and see every speech provider's result side by side.
 
 Nothing is saved: each clip is held in memory, sent to each provider, printed and dropped.
-Gemini's free tier allows about 25 transcriptions a day, so keep the run to a dozen prompts.
 
 Run: uv run scripts/bakeoff.py            (all providers in config.toml)
-     uv run scripts/bakeoff.py --local    (local model only, uses no Gemini quota)
+     uv run scripts/bakeoff.py --local    (local model only, no internet)
 """
 
 import sys
@@ -24,10 +23,8 @@ def main() -> None:
     cfg = config.load()
     if "--local" in sys.argv:
         cfg["stt"]["order"] = ["local"]
-    # Verbatim, so the same cleanup pass is compared on both providers' raw words.
-    cfg["stt"]["gemini"]["smart_mode"] = False
     providers = build_providers(cfg)
-    cleaner = Cleaner(cfg, config.key("GEMINI_API_KEY"))
+    cleaner = Cleaner(cfg)
     learning = Learning(cfg["learning"]["enabled"])
     terms = learning.terms(cfg["dictionary"]["terms"])
     recorder = audio.Recorder(cfg["audio"]["sample_rate"], cfg["audio"]["max_seconds"])
@@ -38,6 +35,7 @@ def main() -> None:
     for provider in providers:
         if hasattr(provider, "warm"):
             provider.warm()
+    cleaner.warm(prompt=True)
 
     number = 0
     while True:

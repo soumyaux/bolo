@@ -22,7 +22,7 @@ from PyObjCTools import AppHelper
 
 from . import audio, config, inject, login, sounds, styles
 from .usage import Usage
-from .cleanup import Cleaner, prompt_prefix
+from .cleanup import Cleaner, prompt_prefix, start_ollama
 from .early import EarlyText
 from .learn import Learning, ax
 from .learn.ax_watch import Watcher
@@ -32,7 +32,6 @@ from .overlay import Overlay
 from .pending import Pending, Saved
 from .settings_window import SettingsWindow
 from .stt.base import BadResult, RateLimited, SttError, Unavailable
-from .stt.gemini import GeminiTranscribe
 from .stt.local_whisper import LocalWhisper
 
 log = logging.getLogger("flow")
@@ -170,22 +169,10 @@ class Chain:
         raise Unavailable("; ".join(errors) or "no speech provider is set up")
 
 
-def build_providers(cfg: dict, usage: Usage | None = None) -> list:
+def build_providers(cfg: dict) -> list:
     providers = []
     for name in cfg["stt"]["order"]:
-        if name == "gemini" and config.key("GEMINI_API_KEY"):
-            gemini = cfg["stt"]["gemini"]
-            providers.append(
-                GeminiTranscribe(
-                    config.key("GEMINI_API_KEY"),
-                    model=gemini["model"],
-                    language_codes=gemini["language_codes"],
-                    smart_mode=gemini["smart_mode"],
-                    timeout=cfg["stt"]["timeout_seconds"],
-                    on_request=usage and (lambda: usage.add("gemini_speech", pacific=True)),
-                )
-            )
-        elif name == "local":
+        if name == "local":
             local = cfg["stt"]["local"]
             providers.append(
                 LocalWhisper(local["model"], local["languages"], local["unload_after_idle_minutes"])
@@ -202,7 +189,6 @@ class FlowApp(rumps.App):
         self.status = rumps.MenuItem("Starting...")
         self.usage = Usage()
         self.used_today = rumps.MenuItem("Today: 0 dictations")
-        self.gemini_today = rumps.MenuItem("Gemini today")
         self.learned = rumps.MenuItem("Learned words")
         self.saved = rumps.MenuItem("Saved dictations")
         self.at_login = rumps.MenuItem("Start at login", callback=self._toggle_login)
@@ -210,7 +196,6 @@ class FlowApp(rumps.App):
         self.menu = [
             self.status,
             self.used_today,
-            self.gemini_today,
             None,
             rumps.MenuItem("Fix last dictation...", callback=lambda _: self._open_fix()),
             rumps.MenuItem("Settings…", callback=lambda _: self.settings_window.show(self.cfg)),
@@ -219,8 +204,8 @@ class FlowApp(rumps.App):
             self.at_login,
         ]
         self.recorder = audio.Recorder(cfg["audio"]["sample_rate"], cfg["audio"]["max_seconds"])
-        self.chain = Chain(build_providers(cfg, self.usage))
-        self.cleaner = Cleaner(cfg, config.key("GEMINI_API_KEY"), self._count_cleanup)
+        self.chain = Chain(build_providers(cfg))
+        self.cleaner = Cleaner(cfg)
         learning = cfg["learning"]
         self.learning = Learning(learning["enabled"])
         self.fix_window = FixWindow(self._fix_saved)
@@ -298,7 +283,7 @@ class FlowApp(rumps.App):
         if not trusted:
             return "Allow Accessibility, then restart"
         if not self.chain.providers:
-            return "Add GEMINI_API_KEY to .env, then restart"
+            return "No speech provider is set up in config.toml"
         return ""
 
     def _prompt_key(self) -> str:
@@ -461,7 +446,7 @@ class FlowApp(rumps.App):
         """Uses new settings without a restart. Keys, hands-free, mute, styles and prompt mode are
         read from self.cfg each time; the rest is rebuilt here."""
         self.cfg = cfg
-        self.cleaner = Cleaner(cfg, config.key("GEMINI_API_KEY"), self._count_cleanup)
+        self.cleaner = Cleaner(cfg)
         self.sounds.update(cfg)
         learning = cfg["learning"]
         if learning["enabled"] and learning["auto_capture"]:
@@ -470,12 +455,9 @@ class FlowApp(rumps.App):
             self.watcher.finish()
             self.watcher = None
 
-    def _count_cleanup(self) -> None:
-        self.usage.add("gemini_cleanup", pacific=True)
-
     def _refresh_usage(self) -> None:
-        """Updates the two usage lines in the menu. Main thread only."""
-        self.used_today.title, self.gemini_today.title = self.usage.lines()
+        """Updates the usage line in the menu. Main thread only."""
+        self.used_today.title = self.usage.line()
 
     def _refresh_learned(self) -> None:
         """Rebuilds the "Learned words" menu. Main thread only."""
@@ -550,10 +532,23 @@ class FlowApp(rumps.App):
         self._pill("message", summary[:60])
         return summary[:80]
 
-    def _warm_providers(self) -> None:
+    def _warm_providers(self, prompt: bool = False) -> None:
+        """Loads the speech and cleanup models while the user speaks. prompt also loads the bigger
+        prompt-mode model, for apps where prompts are dictated."""
         for provider in self.chain.providers:
             if hasattr(provider, "warm"):
                 provider.warm()
+        self.cleaner.warm(prompt)
+
+    def _prompt_likely(self) -> bool:
+        """True when this dictation may well be a prompt: the prompt key is held, or the front app's
+        style is "prompt" (Cursor, VS Code). Read from the app list only, so it costs nothing."""
+        if self._prompt_key_used:
+            return True
+        app = NSWorkspace.sharedWorkspace().frontmostApplication()
+        if app is None:
+            return False
+        return styles.for_app(self.cfg, app.localizedName() or "", app.bundleIdentifier() or "") == "prompt"
 
     def _restore_sound(self) -> None:
         if self._muted:
@@ -568,6 +563,8 @@ class FlowApp(rumps.App):
         except Exception as e:
             log.exception("microphone warm-up failed")
             self._problem = self._problem or f"Microphone: {e}"[:80]
+        if self.cleaner.enabled:
+            start_ollama()
         self._warm_providers()
         self._show(WARN if self._problem else IDLE, self._problem or "Ready")
         # Started at login there is no terminal, so the log file is where a missing permission shows.
@@ -592,8 +589,8 @@ class FlowApp(rumps.App):
                     self._show(RECORDING)
                     self._pill("listening")
                     open_up_front_app(learning=self.watcher is not None)
-                    # Reload the local model while the user is still speaking, if it was unloaded.
-                    self._warm_providers()
+                    # Reload the models while the user is still speaking, if they were unloaded.
+                    self._warm_providers(self._prompt_likely())
                     if self.watcher:
                         self.watcher.finish()
                     if self.cfg["audio"]["mute_while_recording"]:
@@ -794,9 +791,6 @@ class FlowApp(rumps.App):
             raw, provider = self.chain.transcribe(flac, terms + self.cfg["dictionary"].get("hints", []))
         raw = f"{before} {raw}".strip()
         heard = time.perf_counter() - start
-        # Gemini's smart mode already returns cleaned text, but it can still be in Hindi script.
-        # Early text is always the local model's, which is raw.
-        smart = not before and provider == "gemini" and self.cfg["stt"]["gemini"]["smart_mode"]
         text = self.learning.apply(raw)
         app, style = (target.app, target.style) if target else ("", "default")
         prompt_mode = self.cfg.get("prompt_mode", {})
@@ -809,11 +803,11 @@ class FlowApp(rumps.App):
             if target:
                 self._pill("busy", "Writing prompt…")
             text, route = self.cleaner.to_prompt(
-                text, already_clean=smart, terms=terms, examples=self.learning.examples(text, app), style=style
+                text, terms=terms, examples=self.learning.examples(text, app), style=style
             )
         else:
             text, route = self.cleaner.clean(
-                text, already_clean=smart, terms=terms, examples=self.learning.examples(text, app), style=style
+                text, terms=terms, examples=self.learning.examples(text, app), style=style
             )
         return raw, text, provider, route, heard
 
@@ -825,7 +819,7 @@ class FlowApp(rumps.App):
         """Tries saved audio again in the background, waiting longer after each failure."""
         while True:
             time.sleep(15)
-            # Gemini's count starts again at midnight Pacific, and the day's at midnight here.
+            # The day's count starts again at midnight.
             AppHelper.callAfter(self._refresh_usage)
             # Never compete with a dictation the user is making now.
             if self._held or self._locked or self._writing:

@@ -9,11 +9,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import httpx
-import numpy as np
 
-from flow import audio, config
-from flow.stt.base import SttError, blocked_by_network
-from flow.stt.gemini import GeminiTranscribe
+from flow import config
+from flow.stt.base import blocked_by_network
 
 
 def _limit_headers(response: httpx.Response) -> None:
@@ -22,38 +20,6 @@ def _limit_headers(response: httpx.Response) -> None:
         print("  no rate-limit headers in the response")
     for k, v in sorted(found.items()):
         print(f"  {k}: {v}")
-
-
-def check_gemini(cfg: dict) -> None:
-    print("Gemini")
-    api_key = config.key("GEMINI_API_KEY")
-    if not api_key:
-        print("  GEMINI_API_KEY is not set in .env")
-        return
-    model = cfg["stt"]["gemini"]["model"]
-    meta = httpx.get(
-        f"https://generativelanguage.googleapis.com/v1beta/models/{model}",
-        headers={"x-goog-api-key": api_key},
-        timeout=15,
-    )
-    print(f"  model lookup {model}: HTTP {meta.status_code}")
-    if not meta.is_success:
-        print(f"  {meta.text[:300]}")
-        return
-    info = meta.json()
-    for field in ("displayName", "inputTokenLimit", "outputTokenLimit"):
-        if field in info:
-            print(f"  {field}: {info[field]}")
-
-    # One second of silence: the smallest real transcription request.
-    silence = audio.to_flac(np.zeros(16000, dtype=np.int16))
-    provider = GeminiTranscribe(api_key, model=model, smart_mode=cfg["stt"]["gemini"]["smart_mode"])
-    try:
-        text = provider.transcribe(silence)
-        print(f"  transcription request: ok, sent {provider.last_route}, returned {text!r}")
-    except SttError as e:
-        print(f"  transcription request failed: {e}")
-    print("  The free daily cap is not in the API. Read it in Google AI Studio > Rate limits.")
 
 
 def check_groq(cfg: dict) -> None:
@@ -86,5 +52,4 @@ def check_groq(cfg: dict) -> None:
 
 if __name__ == "__main__":
     cfg = config.load()
-    check_gemini(cfg)
     check_groq(cfg)

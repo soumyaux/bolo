@@ -6,7 +6,11 @@ runs only when the text shows something the local pass cannot fix, and is droppe
 
 import logging
 import re
-from collections.abc import Callable
+import shutil
+import subprocess
+import threading
+import time
+from pathlib import Path
 
 import httpx
 
@@ -145,26 +149,100 @@ def needs_llm(text: str, max_words: int) -> bool:
     )
 
 
+# After this many LLM failures in a row the LLM is left alone for a while, so no dictation waits on it.
+_FAILURES_TO_REST, _REST_SECONDS = 2, 300
+# A styled app ("prompt", "casual", "formal") still skips the LLM for clean text this short: the
+# local pass already applies the style's punctuation, and the LLM would add about 1 s.
+_SHORT_WORDS = 12
+# How long Ollama keeps a model loaded after its last use.
+_KEEP_ALIVE = "30m"
+
+
+_OLLAMA = "http://127.0.0.1:11434"
+# Where Ollama may be installed: on the PATH, the standalone download, or the Mac app.
+_OLLAMA_BINARIES = [
+    Path.home() / ".local/bin/ollama",
+    Path.home() / ".local/ollama/ollama",
+    Path("/opt/homebrew/bin/ollama"),
+    Path("/Applications/Ollama.app/Contents/Resources/ollama"),
+]
+
+
+def start_ollama(url: str = _OLLAMA) -> bool:
+    """Starts the Ollama server when nothing answers at url. It keeps running after Bolo quits,
+    like a login service. Returns True when the server answers or was started."""
+    try:
+        httpx.get(f"{url}/api/version", timeout=1, trust_env=False)
+        return True
+    except httpx.HTTPError:
+        pass
+    found = shutil.which("ollama")
+    binary = Path(found) if found else next((path for path in _OLLAMA_BINARIES if path.exists()), None)
+    if binary is None:
+        log.warning("Ollama is not installed, so the cleanup pass is off")
+        return False
+    with open(Path.home() / "Library/Logs/Ollama.log", "ab") as out:
+        subprocess.Popen(
+            [str(binary), "serve"],
+            stdout=out,
+            stderr=out,
+            stdin=subprocess.DEVNULL,
+            env={"PATH": "/usr/bin:/bin", "HOME": str(Path.home()), "OLLAMA_HOST": url.split("//", 1)[-1]},
+            start_new_session=True,
+        )
+    log.info("started Ollama from %s", binary)
+    return True
+
+
 class Cleaner:
-    def __init__(self, cfg: dict, api_key: str | None, on_request: Callable[[], None] | None = None):
-        """on_request runs for every request sent to the LLM, for the usage count."""
-        self._on_request = on_request
+    def __init__(self, cfg: dict):
         cleanup = cfg["cleanup"]
+        prompt_mode = cfg.get("prompt_mode", {})
         self.enabled = cleanup["enabled"]
         self.lists = cleanup["lists"]
         self.max_words = cleanup["fast_path_max_words"]
         self.model = cleanup["model"]
+        # Laying out a prompt is harder than cleaning a sentence, so it may use a bigger model.
+        self.prompt_model = prompt_mode.get("model", self.model)
         self.terms = cfg["dictionary"]["terms"]
         self.hints = cfg["dictionary"].get("hints", [])
-        # Laying out a prompt takes longer than cleaning a sentence.
-        self.prompt_timeout = cfg.get("prompt_mode", {}).get("timeout_seconds", 8)
+        self.prompt_timeout = prompt_mode.get("timeout_seconds", 5)
+        self._failures = 0
+        self._rest_until = 0.0
         self._client = None
-        if self.enabled and api_key and cleanup["provider"] == "gemini":
+        if self.enabled and cleanup.get("provider", "ollama") == "ollama":
+            # Ollama runs on this Mac. trust_env=False keeps any proxy (and the company web filter) out.
             self._client = httpx.Client(
-                base_url="https://generativelanguage.googleapis.com",
-                headers={"x-goog-api-key": api_key},
+                base_url=cleanup.get("url", _OLLAMA),
                 timeout=cleanup["timeout_seconds"],
+                trust_env=False,
             )
+
+    def warm(self, prompt: bool = False) -> None:
+        """Loads the cleanup model, and the prompt model too when prompt is True, without waiting.
+        Call when the key goes down; a model already loaded answers at once."""
+        if self._client is None:
+            return
+        models = dict.fromkeys([self.model, self.prompt_model] if prompt else [self.model])
+
+        def load():
+            for model in models:
+                try:
+                    # A request without a prompt only loads the model.
+                    self._client.post("/api/generate", json={"model": model, "keep_alive": _KEEP_ALIVE}, timeout=60)
+                except httpx.HTTPError as e:
+                    log.info("cleanup model %s not warmed: %s", model, type(e).__name__)
+
+        threading.Thread(target=load, daemon=True).start()
+
+    def _resting(self) -> bool:
+        return time.monotonic() < self._rest_until
+
+    def _failed(self) -> None:
+        self._failures += 1
+        if self._failures >= _FAILURES_TO_REST and not self._resting():
+            self._rest_until = time.monotonic() + _REST_SECONDS
+            log.warning("cleanup LLM failed %d times in a row; skipping it for %d min", self._failures, _REST_SECONDS // 60)
 
     def _llm(self, text: str, terms: list[str], examples: list[tuple[str, str]], style: str) -> str:
         system = _SYSTEM.format(
@@ -178,21 +256,29 @@ class Cleaner:
             system += _EXAMPLES + "".join(_EXAMPLE.format(raw=raw, final=final) for raw, final in examples)
         return self._ask(system, text)
 
-    def _ask(self, system: str, text: str, timeout: float | None = None) -> str:
-        if self._on_request:
-            self._on_request()
-        response = self._client.post(
-            f"/v1beta/models/{self.model}:generateContent",
-            json={
-                "system_instruction": {"parts": [{"text": system}]},
-                "contents": [{"role": "user", "parts": [{"text": f"<transcript>\n{text}\n</transcript>"}]}],
-                "generationConfig": {"temperature": 0},
-            },
-            **({"timeout": timeout} if timeout else {}),
-        )
-        response.raise_for_status()
-        parts = response.json()["candidates"][0]["content"]["parts"]
-        return "".join(p.get("text", "") for p in parts).strip()
+    def _ask(self, system: str, text: str, timeout: float | None = None, model: str | None = None) -> str:
+        try:
+            response = self._client.post(
+                "/api/chat",
+                json={
+                    "model": model or self.model,
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": f"<transcript>\n{text}\n</transcript>"},
+                    ],
+                    "stream": False,
+                    "options": {"temperature": 0},
+                    "keep_alive": _KEEP_ALIVE,
+                },
+                **({"timeout": timeout} if timeout else {}),
+            )
+            response.raise_for_status()
+            answer = response.json()["message"]["content"].strip()
+        except (httpx.HTTPError, KeyError, ValueError):
+            self._failed()
+            raise
+        self._failures = 0
+        return answer
 
     def clean(
         self,
@@ -211,11 +297,14 @@ class Cleaner:
         terms = self.terms if terms is None else terms
         text = raw.strip() if already_clean else tidy(raw, terms, style)
         wanted = _DEVANAGARI.search(text) if already_clean else needs_llm(text, self.max_words)
-        if not self.enabled or self._client is None or not (wanted or style in _STYLES):
+        styled = style in _STYLES and len(text.split()) > _SHORT_WORDS
+        if not self.enabled or self._client is None or not (wanted or styled):
             return text, "fast"
+        if self._resting():
+            return text, "llm-skipped"
         try:
             cleaned = self._llm(text, terms, examples or [], style)
-        except (httpx.HTTPError, KeyError, IndexError) as e:
+        except (httpx.HTTPError, KeyError, ValueError) as e:
             log.warning("cleanup pass skipped: %s: %s", type(e).__name__, str(e)[:120])
             return text, "llm-skipped"
         # A much longer result means the model answered the text instead of cleaning it.
@@ -242,15 +331,15 @@ class Cleaner:
             return self.clean(raw, already_clean, terms, examples, style)[0]
 
         text = raw.strip() if already_clean else tidy(raw, terms)
-        if not self.enabled or self._client is None:
+        if not self.enabled or self._client is None or self._resting():
             return normally(), "prompt-failed"
         system = _PROMPT.format(terms=", ".join(terms) or "none", hints=", ".join(self.hints) or "none")
         try:
-            result = self._ask(system, text, self.prompt_timeout)
+            result = self._ask(system, text, self.prompt_timeout, self.prompt_model)
         except httpx.TimeoutException:
             log.warning("prompt mode timed out after %s s", self.prompt_timeout)
             return text, "prompt-timeout"
-        except (httpx.HTTPError, KeyError, IndexError) as e:
+        except (httpx.HTTPError, KeyError, ValueError) as e:
             log.warning("prompt mode failed: %s: %s", type(e).__name__, str(e)[:120])
             return normally(), "prompt-failed"
         # The labels make it longer than the speech, but not this much unless the model answered it.

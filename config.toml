@@ -46,16 +46,9 @@ keep_hours = 24
 
 [stt]
 # Tried in order. A failure, a 429 or a timeout moves to the next one.
-# "local" runs on this Mac: fast, no limit, no internet. "gemini" is more accurate but slow on the free tier.
-order = ["local", "gemini"]
-# Gemini's free tier took 8 to 20 s per clip when measured on 2026-10-14; lower this once a fast provider is first.
-timeout_seconds = 30
-
-[stt.gemini]
-model = "gemini-3.5-transcribe"
-# Empty = auto-detect, which allows English and Hindi in one sentence.
-language_codes = []
-smart_mode = true
+# "local" runs on this Mac: fast, no limit, no internet.
+order = ["local"]
+timeout_seconds = 4
 
 [stt.groq]
 model = "whisper-large-v3"
@@ -70,11 +63,13 @@ unload_after_idle_minutes = 10
 
 [cleanup]
 enabled = true
-# Runs only when the text has a self-correction, spoken steps, Hindi script, or is long.
-provider = "gemini"
-model = "gemini-3.5-flash-lite"
-# If the pass takes longer than this, the locally tidied text is pasted instead.
-timeout_seconds = 4
+# Runs only when the text has a self-correction, spoken steps, Hindi script, or is long, or goes
+# into a styled app and is longer than 12 words. Runs on this Mac through Ollama, no internet.
+provider = "ollama"
+model = "qwen2.5:3b"
+# If the pass takes longer than this, the locally tidied text is pasted instead. After two
+# failures in a row the pass is skipped for 5 minutes.
+timeout_seconds = 3
 # Spoken steps become a numbered list, spoken items become bullets.
 lists = true
 # Clean transcripts at or under this many words skip the LLM pass.
@@ -90,13 +85,15 @@ prefixes = ["as a prompt", "prompt mode"]
 key = ""
 # Always use it in apps whose style is "prompt" (Cursor, VS Code, Antigravity).
 in_prompt_apps = false
+# The model that lays out the prompt; bigger than the cleanup model, so it keeps every detail.
+model = "qwen2.5:7b"
 # If the prompt takes longer than this, the plainly cleaned text is pasted instead.
-timeout_seconds = 8
+timeout_seconds = 5
 
 [styles]
 # How text is written in each app: "prompt", "casual", "formal" or "default". A style changes
-# punctuation and layout, never your words. Any style but "default" always uses the cleanup pass,
-# even for a short sentence (about 1 s more). Apps not listed use "default".
+# punctuation and layout, never your words. Any style but "default" uses the cleanup pass for text
+# longer than 12 words (about 1 s more). Apps not listed use "default".
 
 [styles.apps]
 # By bundle ID, or by the app's name as shown in the menu bar.
