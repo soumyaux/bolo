@@ -6,7 +6,8 @@ import time
 from pathlib import Path
 
 PATH = Path.home() / "Library/Application Support/Bolo/learning.db"
-# Dictated text is only needed to fix recent ones, so older rows are dropped.
+# Dictated text is only needed to fix recent ones, so older rows are dropped. A row whose audio is
+# kept for voice training stays until that audio is deleted (14 days at most).
 _KEEP_DICTATIONS = 200
 # Examples are picked by likeness to each new dictation, so a larger pool finds closer ones.
 _KEEP_EXAMPLES = 200
@@ -37,6 +38,10 @@ class Store:
             columns = {row["name"] for row in self._db.execute("PRAGMA table_info(dictations)")}
             if "mode" not in columns:
                 self._db.execute("ALTER TABLE dictations ADD COLUMN mode TEXT")
+            # Files made before voice training have no audio columns.
+            if "audio" not in columns:
+                self._db.execute("ALTER TABLE dictations ADD COLUMN audio TEXT")
+                self._db.execute("ALTER TABLE dictations ADD COLUMN audio_seconds REAL")
 
     def _run(self, sql: str, *args) -> list[sqlite3.Row]:
         with self._lock, self._db:
@@ -49,7 +54,7 @@ class Store:
                 (time.time(), app, raw, pasted, mode),
             )
             self._db.execute(
-                "DELETE FROM dictations WHERE id <= ?", (row.lastrowid - _KEEP_DICTATIONS,)
+                "DELETE FROM dictations WHERE id <= ? AND audio IS NULL", (row.lastrowid - _KEEP_DICTATIONS,)
             )
             return row.lastrowid
 
@@ -63,6 +68,17 @@ class Store:
 
     def set_corrected(self, dictation_id: int, corrected: str) -> None:
         self._run("UPDATE dictations SET corrected = ? WHERE id = ?", corrected, dictation_id)
+
+    def set_audio(self, dictation_id: int, path: str | None, seconds: float | None = None) -> None:
+        """Links a saved clip to its dictation, or unlinks it (None) once the clip is deleted."""
+        self._run("UPDATE dictations SET audio = ?, audio_seconds = ? WHERE id = ?", path, seconds, dictation_id)
+
+    def with_audio(self) -> list[sqlite3.Row]:
+        """Dictations whose audio is kept, oldest first. The label is corrected, else pasted."""
+        return self._run(
+            "SELECT id, time, app, audio, audio_seconds, COALESCE(corrected, pasted) AS label "
+            "FROM dictations WHERE audio IS NOT NULL ORDER BY id"
+        )
 
     def see_swap(self, heard: str, intended: str, weight: int = 1) -> None:
         self._run(

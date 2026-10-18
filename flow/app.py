@@ -29,6 +29,7 @@ from .learn import Learning, ax
 from .learn.ax_watch import Watcher
 from .learn.fix_window import FixWindow
 from .learn.store import PATH as LEARNING_DB
+from .learn.voice import Voice
 from .overlay import Overlay
 from .pending import Pending, Saved
 from .settings_window import SettingsWindow
@@ -208,6 +209,7 @@ class FlowApp(rumps.App):
         self.status = rumps.MenuItem("Starting...")
         self.usage = Usage()
         self.used_today = rumps.MenuItem("Today: 0 dictations")
+        self.voice_line = rumps.MenuItem("Voice training")
         self.learned = rumps.MenuItem("Learned words")
         self.saved = rumps.MenuItem("Saved dictations")
         self.at_login = rumps.MenuItem("Start at login", callback=self._toggle_login)
@@ -215,6 +217,7 @@ class FlowApp(rumps.App):
         self.menu = [
             self.status,
             self.used_today,
+            self.voice_line,
             None,
             rumps.MenuItem("Fix last dictation...", callback=lambda _: self._open_fix()),
             rumps.MenuItem("Settings…", callback=lambda _: self.settings_window.show(self.cfg)),
@@ -227,6 +230,11 @@ class FlowApp(rumps.App):
         self.cleaner = Cleaner(cfg)
         learning = cfg["learning"]
         self.learning = Learning(learning["enabled"])
+        self.voice = None
+        if self.learning.store and learning.get("save_voice", False):
+            self.voice = Voice(self.learning.store, keep_days=learning.get("voice_keep_days", 14))
+            self.voice.prune()
+        self.voice_line.hidden = self.voice is None
         self.fix_window = FixWindow(self._fix_saved)
         self.settings_window = SettingsWindow(self._save_settings)
         self.watcher = Watcher(self._learn) if learning["enabled"] and learning["auto_capture"] else None
@@ -477,8 +485,10 @@ class FlowApp(rumps.App):
             self.watcher = None
 
     def _refresh_usage(self) -> None:
-        """Updates the usage line in the menu. Main thread only."""
+        """Updates the usage lines in the menu. Main thread only."""
         self.used_today.title = self.usage.line()
+        if self.voice:
+            self.voice_line.title = self.voice.line()
 
     def _refresh_learned(self) -> None:
         """Rebuilds the "Learned words" menu. Main thread only."""
@@ -797,6 +807,11 @@ class FlowApp(rumps.App):
             self._pill("message", f"Couldn't paste. Text saved: press {self._paste_label()} to paste it.", 4)
             return
         dictation_id = self.learning.record(app, raw, text, "prompt" if route == "prompt" else "")
+        # A prompt is laid out unlike what was said, so it cannot teach the speech model.
+        if self.voice and dictation_id and route != "prompt":
+            threading.Thread(
+                target=self._save_voice, args=(dictation_id, clip), daemon=True
+            ).start()
         self.usage.add("dictations")
         self.usage.add("words", len(text.split()))
         self.usage.add("speaking_seconds", len(clip) / rate)
@@ -815,6 +830,18 @@ class FlowApp(rumps.App):
             self._pill("message", "Couldn't write the prompt: pasted plain text", 3)
         else:
             self._pill("hide")
+
+    def _save_voice(self, dictation_id: int, clip) -> None:
+        """Keeps the clip for voice training, in the form the speech models hear it. Whisper hears
+        at most 30 s at once, so only clips up to that long can be trained on."""
+        rate = self.recorder.sample_rate
+        try:
+            speech = audio.prepare(clip, rate)
+            seconds = audio.seconds(speech, rate)
+            if 0 < seconds <= 30:
+                self.voice.save(dictation_id, audio.to_flac(speech, rate), seconds)
+        except Exception:
+            log.exception("voice clip not saved")
 
     def _to_text(
         self, flac: bytes, target: styles.Target | None = None, prompt_key: bool = False, before: str = ""
@@ -856,10 +883,14 @@ class FlowApp(rumps.App):
 
     def _retry_saved(self) -> None:
         """Tries saved audio again in the background, waiting longer after each failure."""
+        pruned = time.monotonic()
         while True:
             time.sleep(15)
             # The day's count starts again at midnight.
             AppHelper.callAfter(self._refresh_usage)
+            if self.voice and time.monotonic() - pruned > 3600:
+                pruned = time.monotonic()
+                self.voice.prune()
             # Never compete with a dictation the user is making now.
             if self._held or self._locked or self._writing:
                 continue

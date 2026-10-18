@@ -63,7 +63,7 @@ A small macOS menu bar app: hold a hotkey, speak, release, and the cleaned-up te
 - Do not bypass, patch, intercept or reverse-engineer Wispr Flow, and do not call Wispr's backend. Do not read Wispr's internal files to detect its limit. Checking whether the `Wispr Flow` process is running is fine.
 - Use only the user's own API keys on providers' free or paid tiers, within their terms. One account per provider.
 - Never ask the user to paste API keys into chat. Keys go in `.env`, which is git-ignored.
-- Do not store audio on disk. Recordings stay in memory and are discarded after pasting.
+- Audio is stored on disk only for voice training (user decision, 2026-10-18): `~/Library/Application Support/Bolo/voice/`, mode 600, deleted as soon as a training run has used it and after 14 days at the latest. Otherwise recordings stay in memory and are discarded after pasting.
 
 ## Machine (checked 2026-10-13)
 

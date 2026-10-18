@@ -133,6 +133,11 @@ enabled = true
 # Works in Mac text fields, Cursor, VS Code, Slack and Chromium browsers; not in terminals.
 # Where it cannot read the field, use fix_last instead.
 auto_capture = true
+# Keeps each dictation's audio (up to 30 s long) on this Mac, readable by you only, to train the
+# speech model on your voice (scripts/train_voice.py). Deleted as soon as a training run has used
+# it, and after voice_keep_days at the latest.
+save_voice = true
+voice_keep_days = 14
 
 [dictionary]
 # Spelled exactly as written here. Add your own names and technical terms.
