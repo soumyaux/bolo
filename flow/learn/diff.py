@@ -15,8 +15,13 @@ _NAME = re.compile(r"[A-Z0-9_./-]")
 class Swap(NamedTuple):
     heard: str
     intended: str
-    # A name or code identifier is trusted the first time; an ordinary word must be seen twice.
+    # A name or code identifier is trusted the first time; so is a word that sounds almost the
+    # same ("test" for "text"). Any other ordinary word must be seen twice.
     name: bool
+
+    @property
+    def trusted(self) -> bool:
+        return self.name or sounds_alike(self.heard, self.intended)
 
 
 class _Word(NamedTuple):
@@ -69,14 +74,43 @@ def _runs(a: list[_Word], b: list[_Word]) -> list[tuple[list[_Word], list[_Word]
 
 def _skeleton(letters: str) -> str:
     """A rough sound key: the first letter, then consonants with look-alike sounds merged."""
-    letters = letters.replace("ph", "f").translate(str.maketrans("ckqzy", "kkksi"))
+    letters = letters.replace("ph", "f").replace("x", "ks").translate(str.maketrans("ckqzy", "kkksi"))
     key = letters[:1] + re.sub(r"[aeiouh]", "", letters[1:])
     return re.sub(r"(.)\1+", r"\1", key)
 
 
+def distance(a, b) -> int:
+    """Levenshtein distance: the fewest single insertions, deletions or changes from a to b.
+    Works on strings (letters) and on lists (words)."""
+    row = list(range(len(b) + 1))
+    for i, x in enumerate(a, 1):
+        prev, row[0] = row[0], i
+        for j, y in enumerate(b, 1):
+            prev, row[j] = row[j], min(row[j] + 1, row[j - 1] + 1, prev + (x != y))
+    return row[-1]
+
+
+def letters(text: str) -> str:
+    return re.sub(r"[\W_]", "", text.lower())
+
+
+def sound_key(text: str) -> str:
+    """The rough sound of a word or phrase, for matching dictionary terms."""
+    return _skeleton(letters(text))
+
+
+def sounds_alike(heard: str, intended: str) -> bool:
+    """True when the two are close enough in sound that speech recognition would mix them up:
+    "test" and "text", "taste" and "text". Stricter than _alike, so it can be trusted at once."""
+    h, i = letters(heard), letters(intended)
+    if len(h) < 3 or len(i) < 3 or h == i:
+        return False
+    return distance(h, i) <= 2 or (distance(_skeleton(h), _skeleton(i)) <= 1 and h[0] == i[0])
+
+
 def _alike(heard: str, intended: str) -> bool:
     """True when one could be a mis-hearing or mis-spelling of the other."""
-    h, i = (re.sub(r"[\W_]", "", s.lower()) for s in (heard, intended))
+    h, i = letters(heard), letters(intended)
     if not h or not i:
         return False
     spelling = SequenceMatcher(None, h, i).ratio()
@@ -84,11 +118,25 @@ def _alike(heard: str, intended: str) -> bool:
     return spelling >= 0.6 or (sound >= 0.8 and spelling >= 0.4)
 
 
+def _repeat(a: list[_Word], old: list[_Word]) -> bool:
+    """True when old, deleted by the user, is a copy of the words just before or after it: speech
+    recognition wrote a phrase twice ("convert on, convert on")."""
+    at = next((n for n, word in enumerate(a) if word.begin == old[0].begin), None)
+    if at is None:
+        return False
+    said = [w.core.lower() for w in old]
+    size = len(old)
+    return said in ([w.core.lower() for w in a[at - size : at]], [w.core.lower() for w in a[at + size : at + 2 * size]])
+
+
 def swaps(before: str, after: str) -> list[Swap]:
     """The mis-hearings the user fixed. Empty when they rewrote the text instead."""
     a, b = _words(before), _words(after)
     found, reworded = [], 0
     for old, new in _runs(a, b):
+        if old and not new and _repeat(a, old):
+            # Removing a repeated phrase is a fix, not a rewrite; tidy() now removes those itself.
+            continue
         # A capital added to the first word of a sentence is not part of the word fixed next to it.
         if old and new and new[0].starts_sentence and old[0].core.capitalize() == new[0].core:
             old, new = old[1:], new[1:]

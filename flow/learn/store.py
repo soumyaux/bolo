@@ -8,7 +8,8 @@ from pathlib import Path
 PATH = Path.home() / "Library/Application Support/Bolo/learning.db"
 # Dictated text is only needed to fix recent ones, so older rows are dropped.
 _KEEP_DICTATIONS = 200
-_KEEP_EXAMPLES = 20
+# Examples are picked by likeness to each new dictation, so a larger pool finds closer ones.
+_KEEP_EXAMPLES = 200
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS dictations (

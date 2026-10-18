@@ -12,7 +12,7 @@ from .store import PATH, Store
 log = logging.getLogger(__name__)
 
 # How many past corrections are shown to the cleanup model as examples.
-_EXAMPLES = 3
+_EXAMPLES = 5
 
 
 class Learning:
@@ -20,7 +20,7 @@ class Learning:
         self.store = Store(path) if enabled else None
 
     def _active(self) -> list:
-        """Learned words in use: switched on, and either a name or seen twice."""
+        """Learned words in use: switched on, and either a name, a sound-alike or seen twice."""
         if self.store is None:
             return []
         best = {}
@@ -31,9 +31,10 @@ class Learning:
         return list(best.values())
 
     def terms(self, dictionary: list[str]) -> list[str]:
-        """The personal dictionary plus the learned spellings, for the speech and cleanup prompts."""
-        learned = [row["intended"] for row in self._active()]
-        return list(dict.fromkeys([*dictionary, *learned]))
+        """The learned spellings, most often corrected first, then the personal dictionary, for the
+        speech and cleanup prompts. Groq's prompt is cut at 224 tokens, so the order matters."""
+        learned = [row["intended"] for row in sorted(self._active(), key=lambda r: -r["count"])]
+        return list(dict.fromkeys([*learned, *dictionary]))
 
     def apply(self, text: str) -> str:
         """Replaces each mis-heard word with the spelling the user corrected it to."""
@@ -68,7 +69,8 @@ class Learning:
         self.store.set_corrected(dictation_id, after)
         found = diff.swaps(before, after)
         for swap in found:
-            self.store.see_swap(swap.heard, swap.intended, 2 if swap.name else 1)
+            # A trusted swap counts as seen twice, so it is used from the next dictation on.
+            self.store.see_swap(swap.heard, swap.intended, 2 if swap.trusted else 1)
         # A rewrite changes the meaning, so it is not an example of how to clean up. Nor is a
         # prompt-mode dictation: it would teach the normal cleanup to restructure text.
         if row["mode"] != "prompt" and (found or diff.similarity(before, after) >= 0.7):

@@ -14,10 +14,17 @@ from pathlib import Path
 
 import httpx
 
+from .learn.diff import distance, letters, sound_key
+
 log = logging.getLogger(__name__)
 
 _FILLER = re.compile(r"(?<![\w'])(?:um+|uh+|uhm+|erm+|hm+|aa+)(?![\w'])[,.]?\s*", re.IGNORECASE)
 _REPEAT = re.compile(r"\b(\w+)(\s+\1\b)+", re.IGNORECASE)
+# A phrase of 2 to 4 words said twice in a row: "convert on, convert on".
+_REPEAT_PHRASE = re.compile(r"\b(\w+(?:[\s,]+\w+){1,3})(?:[\s,]+\1\b)+", re.IGNORECASE)
+_WORD_RUN = re.compile(r"[\w'-]+")
+# Ordinary English words, so a sound-alike match never turns a real word into a dictionary term.
+_ENGLISH_WORDS = Path("/usr/share/dict/words")
 _NEW_PARAGRAPH = re.compile(r"[,.]?\s*\bnew paragraph\b[,.]?\s*", re.IGNORECASE)
 _NEW_LINE = re.compile(r"[,.]?\s*\bnew line\b[,.]?\s*", re.IGNORECASE)
 _SENTENCE_START = re.compile(r"(^|[.!?]\s+|\n)([a-z])")
@@ -104,10 +111,59 @@ Earlier transcripts from this speaker and how they wanted each one written. Matc
 _EXAMPLE = "\n<example>\n<transcript>\n{raw}\n</transcript>\n<wanted>\n{final}\n</wanted>\n</example>"
 
 
+_english: set[str] | None = None
+
+
+def _is_english(word: str) -> bool:
+    global _english
+    if _english is None:
+        try:
+            _english = set(_ENGLISH_WORDS.read_text().lower().split())
+        except OSError:
+            _english = set()
+    return word.lower() in _english
+
+
+def _sound_alike_terms(text: str, terms: list[str]) -> str:
+    """Writes a dictionary term where speech recognition wrote something that sounds like it:
+    "impact UI" for "impact-ui", "Hinglis" for "Hinglish", "Wisper Flow" for "Wispr Flow". A
+    phrase made only of ordinary English words is never changed, so "cable" never becomes "table"
+    here; that takes a learned correction."""
+    for term in sorted(terms, key=len, reverse=True):
+        want, key = letters(term), sound_key(term)
+        if len(want) < 4:
+            continue
+        size = len(_WORD_RUN.findall(term))
+        for n in (size + 1, size):
+            i, words = 0, list(_WORD_RUN.finditer(text))
+            while True:
+                if i + n > len(words):
+                    break
+                group = words[i : i + n]
+                if group[0].group()[:1].lower() != want[:1]:
+                    # Every match starts with the term's first letter (sound keys keep it).
+                    i += 1
+                    continue
+                said = text[group[0].start() : group[-1].end()]
+                got = letters(said)
+                same = got == want or (
+                    not all(_is_english(w.group()) for w in group)
+                    and sound_key(said) == key
+                    and distance(got, want) <= max(1, len(want) // 4)
+                )
+                if same and said != term:
+                    text = text[: group[0].start()] + term + text[group[-1].end() :]
+                    words = list(_WORD_RUN.finditer(text))
+                i += size if same else 1
+    return text
+
+
 def tidy(text: str, terms: list[str], style: str = "default") -> str:
     """The local pass. Fast and safe, and the result is always usable on its own."""
     text = _FILLER.sub("", text)
+    text = _REPEAT_PHRASE.sub(r"\1", text)
     text = _REPEAT.sub(r"\1", text)
+    text = _sound_alike_terms(text, terms)
     text = _NEW_PARAGRAPH.sub("\n\n", text)
     text = _NEW_LINE.sub("\n", text)
     for term in terms:
