@@ -6,6 +6,7 @@ Run: uv run python -m flow.app
 import atexit
 import fcntl
 import logging
+import os
 import queue
 import sys
 import threading
@@ -365,6 +366,7 @@ class FlowApp(rumps.App):
                 # A release missed earlier must not swallow the release of this press.
                 self._ignore_up = None
                 self._prompt_key_used = name == self._prompt_key()
+                log.debug("talk key %s down", name)
                 self._commands.put("down")
                 if self.cfg["audio"]["hands_free"] and now - self._last_tap < _DOUBLE_TAP_SECONDS:
                     self._locked = True
@@ -379,6 +381,7 @@ class FlowApp(rumps.App):
     def _released(self, now: float) -> None:
         """The talk key went up. Main thread."""
         self._held = None
+        log.debug("talk key up after %.2f s%s", now - self._down_at, " (hands-free)" if self._locked else "")
         if self._locked:
             return
         if now - self._down_at < _TAP_SECONDS:
@@ -631,7 +634,10 @@ class FlowApp(rumps.App):
                     self.recorder.stop()
                     self._restore_sound()
                     self._show(IDLE)
-                    self._pill("hide")
+                    # It may be the first half of a double tap; a second press replaces the message.
+                    log.info("dropped: too short (key held under %.1f s)", _TAP_SECONDS)
+                    key = _KEY_LABELS.get(self.cfg["hotkey"]["push_to_talk"], "the key")
+                    self._pill("message", f"Too short: hold {key} while you speak", 1.5)
                 elif command == "cancel":
                     self._stop_early()
                     self.recorder.stop()
@@ -641,6 +647,7 @@ class FlowApp(rumps.App):
                 elif command == "up":
                     if not self.recorder.recording:
                         # The microphone never opened; its error is already showing.
+                        log.info("dropped: the microphone never opened")
                         self._stop_early()
                         self._restore_sound()
                         continue
@@ -657,9 +664,21 @@ class FlowApp(rumps.App):
                     start, frames = self._beep
                     clip = audio.cut(clip, start, start + frames)
                     length = audio.seconds(clip, self.recorder.sample_rate)
-                    if length < self.cfg["audio"]["min_seconds"] or audio.peak_dbfs(clip) < _QUIET_DBFS:
-                        self._show(IDLE, "Nothing heard")
-                        self._pill("message", "Nothing heard")
+                    peak = audio.peak_dbfs(clip)
+                    if self.recorder.silent:
+                        log.info("dropped: the microphone sent no audio")
+                        self._show(WARN, "The microphone sent no audio: try again")
+                        self._pill("message", "The microphone sent no audio. Try again.", 3)
+                        continue
+                    if length < self.cfg["audio"]["min_seconds"]:
+                        log.info("dropped: too short (%.2f s of audio)", length)
+                        self._show(IDLE, "Too short")
+                        self._pill("message", "Too short: nothing heard")
+                        continue
+                    if peak < _QUIET_DBFS:
+                        log.info("dropped: too quiet (peak %.0f dBFS, %.1f s)", peak, length)
+                        self._show(IDLE, "Too quiet: nothing heard")
+                        self._pill("message", "Too quiet: nothing heard. Is the right mic on?", 2.5)
                         continue
                     threading.Thread(
                         target=self._dictate,
@@ -734,6 +753,7 @@ class FlowApp(rumps.App):
         else:
             speech = audio.prepare(clip, rate)
             if audio.seconds(speech, rate) < self.cfg["audio"]["min_seconds"]:
+                log.info("dropped: no speech found in %.1f s of audio", len(clip) / rate)
                 self._show(IDLE, "Nothing heard")
                 self._pill("message", "Nothing heard")
                 return
@@ -946,7 +966,9 @@ def main() -> None:
     lock = only_copy()
     if lock is None:
         sys.exit("Bolo is already running (look for its icon in the menu bar).")
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s", datefmt="%H:%M:%S")
+    # BOLO_DEBUG=1 also logs each talk-key press and release with its timing.
+    level = logging.DEBUG if os.environ.get("BOLO_DEBUG") else logging.INFO
+    logging.basicConfig(level=level, format="%(asctime)s %(name)s %(message)s", datefmt="%H:%M:%S")
     logging.getLogger("httpx").setLevel(logging.WARNING)
     # Menu bar only: no Dock icon.
     NSBundle.mainBundle().infoDictionary()["LSUIElement"] = "1"

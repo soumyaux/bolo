@@ -94,6 +94,8 @@ class Recorder:
         self._refresh = False
         self._callbacks = 0
         self._started_at = 0.0
+        # True when the last stop() found the microphone had sent nothing at all.
+        self.silent = False
 
     @property
     def recording(self) -> bool:
@@ -180,7 +182,8 @@ class Recorder:
         stream, self._stream = self._stream, None
         if stream is None:
             return np.zeros(0, dtype=np.int16)
-        if not self._callbacks and time.monotonic() - self._started_at > 0.5:
+        self.silent = not self._callbacks and time.monotonic() - self._started_at > 0.5
+        if self.silent:
             # The stream ran but the device sent nothing: it went away. Start fresh next time.
             log.warning("the microphone sent no audio; the device list will be read again")
             self._refresh = True
