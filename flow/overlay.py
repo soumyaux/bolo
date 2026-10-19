@@ -113,9 +113,14 @@ def _screen_with_mouse():
     """The display the user is working on; with two screens the main one may be the other."""
     mouse = NSEvent.mouseLocation()
     for screen in NSScreen.screens():
-        if NSPointInRect(mouse, screen.frame()):
+        if NSPointInRect(mouse, _with_top_edge(screen.frame())):
             return screen
     return NSScreen.mainScreen()
+
+
+def _with_top_edge(frame):
+    """frame, counting its top edge in: a mouse pushed against the top of the screen sits on it."""
+    return NSMakeRect(frame.origin.x, frame.origin.y, frame.size.width, frame.size.height + 1)
 
 
 def _calm() -> bool:
@@ -421,6 +426,9 @@ class Overlay:
     def ready(self, status: str, ok: bool = True) -> None:
         """What a peek shows: "Ready", the last result, or the setup problem (ok False)."""
         self._status = (status, ok)
+        # The first call builds the island, so hovering on the notch works before any dictation.
+        if self._panel is None:
+            self._build()
         if self._state == "peek":
             self._render()
 
@@ -1026,7 +1034,7 @@ class Overlay:
         if self._panel is None:
             return
         mouse = NSEvent.mouseLocation()
-        if self._state == "hidden" and not NSPointInRect(mouse, self._screen.frame()):
+        if self._state == "hidden" and not NSPointInRect(mouse, _with_top_edge(self._screen.frame())):
             # Nothing shows, so the island can move to the screen the user is on.
             screen = _screen_with_mouse()
             if screen != self._screen:
@@ -1037,7 +1045,8 @@ class Overlay:
         if self._state == "hidden":
             # Only the notch itself (or a thin strip at the top centre) opens a peek.
             width = self._gap + 12 if not self._floating else 180
-            zone = NSMakeRect(_W / 2 - width / 2, _H - self._top - self._bar, width, self._bar + self._top)
+            # A mouse pushed against the top edge sits exactly on it, so the zone reaches past it.
+            zone = NSMakeRect(_W / 2 - width / 2, _H - self._top - self._bar, width, self._bar + self._top + 2)
             if NSPointInRect(point, zone):
                 self._go("peek")
             return
