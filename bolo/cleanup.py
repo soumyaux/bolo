@@ -272,18 +272,47 @@ class Cleaner:
         self._failures: dict[str, int] = {}
         self._rest_until: dict[str, float] = {}
         self._client = None
+        # Models Ollama does not have, found by check(); cleanup is skipped while any is missing.
+        self.missing: list[str] = []
         if self.enabled and cleanup.get("provider", "ollama") == "ollama":
-            # Ollama runs on this Mac. trust_env=False keeps any proxy (and the company web filter) out.
+            # Ollama runs on this Mac. trust_env=False keeps any proxy (and a network filter) out.
             self._client = httpx.Client(
                 base_url=cleanup.get("url", _OLLAMA),
                 timeout=cleanup["timeout_seconds"],
                 trust_env=False,
             )
 
+    def check(self) -> str:
+        """Starts Ollama and asks it which models it has. Returns what the menu should say when
+        the cleanup cannot run, or "" when it can."""
+        if self._client is None:
+            return ""
+        url = str(self._client.base_url).rstrip("/")
+        if not start_ollama(url):
+            self._client = None
+            return "Cleanup off: Ollama is not installed"
+        for _ in range(20):
+            try:
+                tags = self._client.get("/api/tags", timeout=2).json()
+                break
+            except (httpx.HTTPError, ValueError):
+                # Just started: give the server a moment.
+                time.sleep(0.5)
+        else:
+            log.warning("Ollama does not answer at %s", url)
+            return ""
+        have = {entry.get("name", "") for entry in tags.get("models", [])}
+        have |= {name.removesuffix(":latest") for name in have}
+        self.missing = [model for model in dict.fromkeys([self.model, self.prompt_model]) if model not in have]
+        if self.missing:
+            log.warning("cleanup model(s) missing from Ollama: %s", ", ".join(self.missing))
+            return f"Cleanup model missing: run `ollama pull {self.missing[0]}`"
+        return ""
+
     def warm(self, prompt: bool = False) -> None:
         """Loads the cleanup model, and the prompt model too when prompt is True, without waiting.
         Call when the key goes down; a model already loaded answers at once."""
-        if self._client is None:
+        if self._client is None or self.missing:
             return
         models = dict.fromkeys([self.model, self.prompt_model] if prompt else [self.model])
 
@@ -367,7 +396,7 @@ class Cleaner:
         text = raw.strip() if already_clean else tidy(raw, terms, style)
         wanted = _DEVANAGARI.search(text) if already_clean else needs_llm(text, self.max_words)
         styled = style in _STYLES and len(text.split()) > _SHORT_WORDS
-        if not self.enabled or self._client is None or not (wanted or styled):
+        if not self.enabled or self._client is None or self.model in self.missing or not (wanted or styled):
             return text, "fast"
         if self._resting(self.model):
             return text, "llm-skipped"
@@ -409,7 +438,12 @@ class Cleaner:
             return self.clean(raw, already_clean, terms, examples, style)[0]
 
         text = raw.strip() if already_clean else tidy(raw, terms)
-        if not self.enabled or self._client is None or self._resting(self.prompt_model):
+        if (
+            not self.enabled
+            or self._client is None
+            or self.prompt_model in self.missing
+            or self._resting(self.prompt_model)
+        ):
             return normally(), "prompt-failed"
         system = _PROMPT.format(terms=", ".join(terms) or "none", hints=", ".join(self.hints) or "none")
         if on_llm:

@@ -1,6 +1,11 @@
-"""Loads config.toml and the API keys from .env, and saves the settings window's changes."""
+"""Loads the settings and the API keys, and saves the settings window's changes.
+
+The shipped defaults are config.default.toml in the repo. Each user's own settings live in
+~/Library/Application Support/Bolo/config.toml and win over the defaults, so a git pull never
+touches them. Keys come from .env in that folder, or from the repo's .env while developing."""
 
 import os
+import shutil
 import tomllib
 from pathlib import Path
 
@@ -8,13 +13,38 @@ import tomlkit
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
-PATH = ROOT / "config.toml"
+DEFAULTS = ROOT / "config.default.toml"
+USER_DIR = Path.home() / "Library/Application Support/Bolo"
+PATH = USER_DIR / "config.toml"
+ENV = USER_DIR / ".env"
+# Tables that are lists of the user's own entries: the user's table replaces the default one
+# whole, so an entry removed in Settings stays removed.
+_WHOLE = {("styles", "apps"), ("styles", "sites"), ("styles", "titles")}
 
 
-def load(path: Path | None = None) -> dict:
+def merge(defaults: dict, user: dict, at: tuple[str, ...] = ()) -> dict:
+    """The defaults with the user's values on top, table by table."""
+    merged = dict(defaults)
+    for name, value in user.items():
+        here = at + (name,)
+        if isinstance(value, dict) and isinstance(merged.get(name), dict) and here not in _WHOLE:
+            merged[name] = merge(merged[name], value, here)
+        else:
+            merged[name] = value
+    return merged
+
+
+def load(path: Path | None = None, defaults: Path = DEFAULTS) -> dict:
+    # The first file loaded wins, so the user's key comes before a developer's repo .env.
+    load_dotenv(ENV)
     load_dotenv(ROOT / ".env")
-    with open(path or PATH, "rb") as f:
-        return tomllib.load(f)
+    with open(defaults, "rb") as f:
+        cfg = tomllib.load(f)
+    path = path or PATH
+    if path.exists():
+        with open(path, "rb") as f:
+            cfg = merge(cfg, tomllib.load(f))
+    return cfg
 
 
 def key(name: str) -> str | None:
@@ -68,9 +98,14 @@ def _set(table, name: str, value) -> None:
 
 
 def save(changes: dict[tuple[str, ...], object], path: Path | None = None) -> None:
-    """Writes changes, such as {("hotkey", "push_to_talk"): "fn"}, into config.toml. The file is read
-    again first, so edits made by hand since Bolo started are kept, and so are all comments."""
+    """Writes changes, such as {("hotkey", "push_to_talk"): "fn"}, into the user's config.toml. The
+    file is read again first, so edits made by hand since Bolo started are kept, and so are all
+    comments. The first save starts the file as a copy of the defaults, comments included."""
     path = path or PATH
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(DEFAULTS, path)
+        path.chmod(0o600)
     doc = tomlkit.parse(path.read_text())
     for keys, value in changes.items():
         table = doc

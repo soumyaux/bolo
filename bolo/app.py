@@ -23,7 +23,7 @@ from PyObjCTools import AppHelper
 
 from . import audio, config, inject, login, sounds, styles
 from .usage import Usage
-from .cleanup import Cleaner, prompt_prefix, start_ollama
+from .cleanup import Cleaner, prompt_prefix
 from .early import EarlyText
 from .learn import Learning, ax
 from .learn.ax_watch import Watcher
@@ -35,7 +35,7 @@ from .pending import Pending, Saved
 from .settings_window import SettingsWindow
 from .stt.base import BadResult, RateLimited, SttError, Unavailable, flac_seconds
 from .stt.groq import GroqWhisper
-from .stt.local_whisper import LocalWhisper
+from .stt.local_whisper import LocalWhisper, ensure_model
 
 log = logging.getLogger("bolo")
 
@@ -480,6 +480,7 @@ class BoloApp(rumps.App):
         read from self.cfg each time; the rest is rebuilt here."""
         self.cfg = cfg
         self.cleaner = Cleaner(cfg)
+        threading.Thread(target=self._check_cleanup, daemon=True).start()
         self.sounds.update(cfg)
         self.overlay.show_words = cfg.get("overlay", {}).get("show_words", True)
         learning = cfg["learning"]
@@ -488,6 +489,11 @@ class BoloApp(rumps.App):
         elif self.watcher:
             self.watcher.finish()
             self.watcher = None
+
+    def _check_cleanup(self) -> None:
+        note = self.cleaner.check()
+        if note and not self._problem:
+            self._show(IDLE, note)
 
     def _refresh_usage(self) -> None:
         """Updates the usage lines in the menu. Main thread only."""
@@ -591,6 +597,26 @@ class BoloApp(rumps.App):
             device, self._muted = self._muted, 0
             audio.unmute_output(device)
 
+    def _fetch_models(self) -> None:
+        """Downloads the local speech model in the background the first time, so a new user is
+        told why it is not ready yet. Groq, when set up, works meanwhile."""
+        for provider in self.chain.providers:
+            if isinstance(provider, LocalWhisper) and not provider.cached():
+                message = "Downloading speech model (1.5 GB)…"
+                self._show(BUSY, message)
+                self._pill("message", message, 5)
+
+                def fetch(provider=provider):
+                    try:
+                        ensure_model(provider.model)
+                    except Exception as e:
+                        log.warning("speech model not downloaded: %s", e)
+                        self._show(WARN, "Speech model download failed; check the network")
+                        return
+                    self._show(WARN if self._problem else IDLE, self._problem or "Speech model ready")
+
+                threading.Thread(target=fetch, daemon=True).start()
+
     def _worker(self) -> None:
         try:
             # The first stream start in a process takes seconds; pay that now, not on the first word.
@@ -599,10 +625,10 @@ class BoloApp(rumps.App):
         except Exception as e:
             log.exception("microphone warm-up failed")
             self._problem = self._problem or f"Microphone: {e}"[:80]
-        if self.cleaner.enabled:
-            start_ollama()
+        self._fetch_models()
+        note = self.cleaner.check()
         self._warm_providers()
-        self._show(WARN if self._problem else IDLE, self._problem or "Ready")
+        self._show(WARN if self._problem else IDLE, self._problem or note or "Ready")
         # Started at login there is no terminal, so the log file is where a missing permission shows.
         if self._problem:
             log.warning("not ready: %s", self._problem)
@@ -921,6 +947,8 @@ class BoloApp(rumps.App):
             if self._held or self._locked or self._writing:
                 continue
             for saved in self.pending.all():
+                if self._held or self._locked or self._writing:
+                    break
                 if saved.due(time.time()):
                     self._try_saved(saved)
 
@@ -930,12 +958,15 @@ class BoloApp(rumps.App):
             self.pending.remove(saved.id)
             return False
         try:
-            with self._paste_lock:
-                raw, text, provider, _, _ = self._to_text(path.read_bytes())
+            # No lock: a dictation started meanwhile must not wait for this one.
+            raw, text, provider, _, _ = self._to_text(path.read_bytes())
         except Exception as e:
             self.pending.tried(saved)
             log.info("saved dictation %s still failing (try %d): %s", saved.id, saved.tries, str(e)[:120])
             AppHelper.callAfter(self._refresh_saved)
+            return False
+        if self._held or self._locked or self._writing:
+            # The user started dictating: keep it for the next round, as if not tried.
             return False
         if not text:
             self.pending.remove(saved.id)

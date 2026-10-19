@@ -2,20 +2,42 @@
 
 import io
 import logging
-import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import numpy as np
 import soundfile as sf
 
 from .base import BadResult, Unavailable, broken
 
-# The model is already downloaded; never contact Hugging Face while the app runs.
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
-
 log = logging.getLogger(__name__)
+
+
+def cached_model(model: str) -> str | None:
+    """The folder holding the model on this Mac, or None when it has not been downloaded.
+    model is a Hugging Face repo, or a folder such as a model trained on the user's voice."""
+    if Path(model).expanduser().is_dir():
+        return str(Path(model).expanduser())
+    from huggingface_hub import snapshot_download
+
+    try:
+        return snapshot_download(model, local_files_only=True)
+    except Exception:
+        return None
+
+
+def ensure_model(model: str) -> str:
+    """The model's folder, downloading it first (about 1.5 GB) when it is not on this Mac yet.
+    Once it is there, Hugging Face is never contacted again."""
+    found = cached_model(model)
+    if found:
+        return found
+    from huggingface_hub import snapshot_download
+
+    log.info("downloading speech model %s", model)
+    return snapshot_download(model)
 
 class LocalWhisper:
     name = "local"
@@ -31,10 +53,15 @@ class LocalWhisper:
         self.languages = languages or ["en"]
         self._idle_seconds = unload_after_idle_minutes * 60
         self._loaded = False
+        # The model's folder on this Mac, found or downloaded on the first load.
+        self._path: str | None = None
         self.last_language = ""
         self._idle_timer: threading.Timer | None = None
         # MLX keeps its GPU state per thread, so loading and every transcription share one thread.
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="whisper")
+
+    def cached(self) -> bool:
+        return cached_model(self.model) is not None
 
     def warm(self) -> None:
         """Starts loading the model without waiting. Call when the key goes down."""
@@ -48,11 +75,13 @@ class LocalWhisper:
         from mlx_whisper.transcribe import ModelHolder
 
         start = time.perf_counter()
-        ModelHolder.get_model(self.model, mx.float16)
+        # A folder, not the repo name, so mlx_whisper never asks Hugging Face for it.
+        self._path = self._path or ensure_model(self.model)
+        ModelHolder.get_model(self._path, mx.float16)
         # The first transcription after loading is slower, so spend it on one second of silence.
         mlx_whisper.transcribe(
             np.zeros(16000, dtype=np.float32),
-            path_or_hf_repo=self.model,
+            path_or_hf_repo=self._path,
             language=self.languages[0],
             verbose=None,
         )
@@ -86,7 +115,7 @@ class LocalWhisper:
         from mlx_whisper.audio import N_FRAMES, N_SAMPLES, log_mel_spectrogram, pad_or_trim
         from mlx_whisper.transcribe import ModelHolder
 
-        model = ModelHolder.get_model(self.model, mx.float16)
+        model = ModelHolder.get_model(self._path, mx.float16)
         mel = log_mel_spectrogram(samples, n_mels=model.dims.n_mels, padding=N_SAMPLES)
         _, probs = model.detect_language(pad_or_trim(mel, N_FRAMES, axis=-2).astype(mx.float16))
         first = self.languages[0]
@@ -116,7 +145,7 @@ class LocalWhisper:
 
         result = mlx_whisper.transcribe(
             samples,
-            path_or_hf_repo=self.model,
+            path_or_hf_repo=self._path,
             language=self.last_language,
             initial_prompt=prompt or None,
             condition_on_previous_text=False,
