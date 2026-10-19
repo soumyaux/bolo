@@ -33,16 +33,16 @@ import os
 os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 import mlx.core as mx
-from huggingface_hub import snapshot_download
 import mlx.nn as nn
 import mlx.optimizers as optim
 import soundfile as sf
+from accuracy import STOCK, evaluate, providers
+from huggingface_hub import snapshot_download
 from mlx.utils import tree_flatten
 from mlx_whisper.audio import N_FRAMES, N_SAMPLES, log_mel_spectrogram, pad_or_trim
 from mlx_whisper.load_models import load_model
 from mlx_whisper.tokenizer import get_tokenizer
 
-from accuracy import STOCK, evaluate, providers
 from bolo import config
 from bolo.learn import Learning
 from bolo.learn.voice import NEEDED_MINUTES, TRAINED, Voice, held_out, training_text
