@@ -74,6 +74,11 @@ def default_input_id() -> int:
     return _default_device(_DEFAULT_INPUT)
 
 
+# The meter: speech starts this many dB above the room's noise and fills it this many dB higher.
+_ABOVE_NOISE, _VOICE_RANGE = 6.0, 38.0
+# How fast the noise estimate may rise, in dB a second, so speech is not taken for noise.
+_FLOOR_RISE = 0.5
+
 class Recorder:
     """Records 16-bit mono audio between start() and stop()."""
 
@@ -86,8 +91,10 @@ class Recorder:
         self._stream: sd.InputStream | None = None
         # Counts recordings, so a reader of an old one never gets samples from the next.
         self.take = 0
-        # The loudness of the latest block, from 0 to 1, for the on-screen meter.
+        # How far the voice is above the room's noise, from 0 to 1, for the on-screen meter.
         self.level = 0.0
+        # The room's noise in dBFS: follows the quietest blocks, and creeps up slowly in between.
+        self._floor: float | None = None
         # PortAudio reads the list of devices once. It must read it again after the Mac's input
         # changes (AirPods on or off), or it keeps opening a device that is gone and hears nothing.
         self._device = default_input_id()
@@ -109,17 +116,31 @@ class Recorder:
 
     def _callback(self, indata, frames, time_info, status) -> None:
         self._callbacks += 1
-        # About -50 dBFS shows as empty and -10 dBFS as full, so normal speech fills most of the meter.
-        peak = int(np.abs(indata.astype(np.int32)).max()) if frames else 0
-        self.level = max(0.0, (20 * np.log10(max(peak, 1) / 32768) + 50) / 40)
+        self.level = self._loudness(indata, frames)
         with self._lock:
             if self._frames < self._max_frames:
                 self._chunks.append(indata.copy())
                 self._frames += frames
 
+    def _loudness(self, indata, frames: int) -> float:
+        """The block's average loudness above the room's noise. Measured against the noise and not
+        as a fixed level, so the meter means the same with any microphone and its gain: a soft voice
+        lifts it a little, a loud one fills it. The average, not the peak, so a click does not."""
+        if not frames:
+            return 0.0
+        rms = float(np.sqrt(np.mean(np.square(indata[:, 0].astype(np.float32)))))
+        db = 20 * np.log10(max(rms, 1.0) / 32768)
+        seconds = frames / self.sample_rate
+        if self._floor is None or db < self._floor:
+            self._floor = db
+        else:
+            self._floor = min(self._floor + _FLOOR_RISE * seconds, -30.0)
+        return min(1.0, max(0.0, (db - self._floor - _ABOVE_NOISE) / _VOICE_RANGE))
+
     def start(self) -> None:
         if self._stream is not None:
             return
+        self._floor = None
         with self._lock:
             self._chunks = []
             self._frames = 0

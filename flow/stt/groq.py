@@ -26,6 +26,8 @@ _BASE = "https://api.groq.com/openai/v1"
 _PROMPT_CHARS = 600
 # How often Groq is checked, and how soon again after it failed or the network changed.
 _CHECK_SECONDS, _RECHECK_SECONDS, _NETWORK_SECONDS = 30, 5, 2
+# How long an idle connection is kept for the next request.
+_KEEP_OPEN_SECONDS = 60
 # A slow upload must not count as Groq being down: this much more time per byte of audio.
 _SECONDS_PER_BYTE = 1 / 100_000
 # Free tier (console.groq.com, 2026-10-18): 20 requests a minute, 2000 a day, 7200 audio seconds an
@@ -157,8 +159,14 @@ class GroqWhisper:
         # "" lets Whisper pick the language per clip, which keeps Hindi as Hindi.
         self.language = language
         self.timeout = timeout
+        # httpx closes a connection after 5 s idle by default, which cost a new TLS handshake
+        # (about 170 ms) on nearly every dictation. Kept open longer than the 30 s check, the check
+        # keeps it warm; Groq was measured keeping an idle connection open for at least 35 s.
         self._client = httpx.Client(
-            base_url=_BASE, headers={"Authorization": f"Bearer {api_key}"}, timeout=timeout
+            base_url=_BASE,
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=timeout,
+            limits=httpx.Limits(keepalive_expiry=_KEEP_OPEN_SECONDS),
         )
         # None until the first check has answered; only True lets requests through.
         self._up: bool | None = None

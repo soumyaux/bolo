@@ -10,6 +10,7 @@ the window server animates. Call every method on the main thread.
 
 import math
 import time
+from collections import deque
 from collections.abc import Callable
 
 import objc
@@ -102,9 +103,17 @@ _FLOAT_TOP, _FLOAT_GAP, _FLOAT_BAR = 6, 36, 32
 _MESSAGE_SECONDS = 1.6
 _DONE_SECONDS = 1.3
 _PEEK_CLOSE_SECONDS = 0.3
+# The meter: 9 bars, tallest in the middle. The newest sound is in the middle bar and moves out
+# to the sides, each step out showing the voice a moment earlier, so it ripples at speaking pace.
 _BARS = 9
-_ENVELOPE = [0.35, 0.55, 0.78, 0.92, 1.0, 0.92, 0.78, 0.55, 0.35]
-_TYPE_RATE = 1.6  # characters per frame at 60 fps, about 95 a second
+_SHAPE = [1.0, 0.86, 0.7, 0.55, 0.42]  # by steps from the middle
+_METER_W, _METER_H = 48, 28
+_STEP_SECONDS = 0.07
+_SAMPLES_PER_SECOND = 120
+# How fast the meter follows the voice: it rises in about 50 ms and settles in about 180 ms, like
+# a VU meter, so it moves with syllables but never flickers.
+_RISE, _FALL = 0.05, 0.18
+_TYPE_RATE = 95  # characters a second
 _POLISH_WIDTH, _WORD_LINES = 440, 3
 _ACTIVE = {"listening", "transcribing", "polishing"}
 
@@ -417,8 +426,7 @@ class Overlay:
         self._prompt = False
         self._done = ""
         self._message = ("", "info")
-        self._lvl = 0.0
-        self._bar_levels = [0.0] * _BARS
+        self._reset_meter()
         self._cancel_at = None
         self._rect = NSMakeRect(0, 0, 0, 0)
 
@@ -437,8 +445,7 @@ class Overlay:
         if self._state != "listening":
             self._started = time.monotonic()
             self._caption = ""
-            self._lvl = 0.0
-            self._bar_levels = [0.0] * _BARS
+            self._reset_meter()
         self._hint = hint
         self._go("listening")
 
@@ -454,6 +461,7 @@ class Overlay:
     def polishing(self, raw: str, model: str = "", prompt: bool = False) -> None:
         """The cleanup model is at work on raw: the words type in under a shimmer."""
         self._words, self._typed = " ".join(raw.split()), 0.0
+        self._typing_from = time.monotonic()
         self._model, self._prompt = model, prompt
         self._go("polishing")
 
@@ -594,18 +602,18 @@ class Overlay:
         parts["orb"] = orb
 
         meter = CAGradientLayer.layer()
-        meter.setBounds_(((0, 0), (48, 22)))
+        meter.setBounds_(((0, 0), (_METER_W, _METER_H)))
         meter.setStartPoint_((0, 0.5))
         meter.setEndPoint_((1, 0.5))
         meter.setColors_([_c(1, 0.36, 0.55), _c(1, 0.5, 0.38), _c(1, 0.66, 0.25)])
         bars = CALayer.layer()
-        bars.setFrame_(((0, 0), (48, 22)))
+        bars.setFrame_(((0, 0), (_METER_W, _METER_H)))
         self._bars = []
         for i in range(_BARS):
             bar = CALayer.layer()
             bar.setBackgroundColor_(_WHITE)
             bar.setCornerRadius_(1.5)
-            bar.setFrame_(((i * 5.6, 9.5), (3, 3)))
+            bar.setFrame_(((i * 5.6, (_METER_H - 3) / 2), (3, 3)))
             bars.addSublayer_(bar)
             self._bars.append(bar)
         meter.setMask_(bars)
@@ -849,7 +857,7 @@ class Overlay:
                 rows = [[("status", *self._wrapped("status", status, _SMALL, 320, 2), "left")]]
         elif state == "listening":
             left = ("orb", 30, 30)
-            right = ("cancel", 24, 24) if self._hover else ("bars", 48, 22)
+            right = ("cancel", 24, 24) if self._hover else ("bars", _METER_W, _METER_H)
             if self._caption:
                 text = _tail(self._caption, _SMALL, 320, 2)
                 rows.append([("caption", *self._wrapped("caption", text, _SMALL, 320, 2), "left")])
@@ -944,7 +952,14 @@ class Overlay:
     # Per-frame work: the meter while listening, the typing while polishing
 
     def _start_ticker(self) -> None:
-        if self._ticker is None:
+        if self._ticker is not None:
+            return
+        view = self._panel.contentView()
+        if hasattr(view, "displayLinkWithTarget_selector_"):
+            # In step with the display (120 Hz on ProMotion), so no frame is drawn twice or skipped.
+            self._ticker = view.displayLinkWithTarget_selector_(self._target, "tick:")
+            self._ticker.addToRunLoop_forMode_(NSRunLoop.currentRunLoop(), NSRunLoopCommonModes)
+        else:
             self._ticker = NSTimer.timerWithTimeInterval_target_selector_userInfo_repeats_(
                 1 / 60, self._target, "tick:", None, True
             )
@@ -965,22 +980,38 @@ class Overlay:
             self._type()
         CATransaction.commit()
 
+    def _reset_meter(self) -> None:
+        self._lvl = 0.0
+        self._glow_lvl = 0.0
+        length = int(_STEP_SECONDS * _SAMPLES_PER_SECOND) * (_BARS // 2) + 1
+        self._history = deque([0.0] * length, maxlen=length)
+        self._sampled = time.monotonic()
+
     def _meter(self) -> None:
+        now = time.monotonic()
+        dt = min(0.1, max(0.0, now - self._sampled))
         raw = max(0.0, min(1.0, self._level()))
-        # Quick to rise, slow to fall, as a VU meter is.
-        self._lvl += (raw - self._lvl) * (0.45 if raw > self._lvl else 0.12)
-        level, now = self._lvl, time.monotonic()
-        self._glow.setValue_forKeyPath_(0.7 + 0.8 * level, "transform.scale")
-        self._glow.setOpacity_(0.35 + 0.65 * level)
-        self._core.setValue_forKeyPath_(1 + 0.3 * level, "transform.scale")
+        # Follows the voice with a time constant, the same at any frame rate.
+        tau = _RISE if raw > self._lvl else _FALL
+        self._lvl += (raw - self._lvl) * (1 - math.exp(-dt / tau))
+        self._glow_lvl += (raw - self._glow_lvl) * (1 - math.exp(-dt / (0.08 if raw > self._glow_lvl else 0.35)))
+        # The history is kept at a fixed rate, so the ripple moves at the same speed on any display.
+        steps = int((now - self._sampled) * _SAMPLES_PER_SECOND)
+        if steps:
+            self._history.extend([self._lvl] * min(steps, self._history.maxlen))
+            self._sampled += steps / _SAMPLES_PER_SECOND
+        glow = self._glow_lvl
+        self._glow.setValue_forKeyPath_(0.65 + 0.9 * glow, "transform.scale")
+        self._glow.setOpacity_(0.3 + 0.7 * glow)
+        self._core.setValue_forKeyPath_(1 + 0.32 * self._lvl, "transform.scale")
+        lag = int(_STEP_SECONDS * _SAMPLES_PER_SECOND)
         for i, bar in enumerate(self._bars):
-            # Each bar wobbles at its own rate, so the meter looks alive at a steady volume.
-            wobble = 0.62 + 0.38 * math.sin(now * (6.5 + i * 1.3) + i * 1.7)
-            target = max(0.06 + 0.04 * math.sin(now * 3 + i), level * _ENVELOPE[i] * wobble)
-            old = self._bar_levels[i]
-            self._bar_levels[i] = old + (target - old) * (0.5 if target > old else 0.2)
-            height = 3 + self._bar_levels[i] * 19
-            bar.setFrame_(((i * 5.6, (22 - height) / 2), (3, height)))
+            out = abs(i - _BARS // 2)
+            voice = self._history[-1 - out * lag] * _SHAPE[out]
+            # In silence a faint swell drifts outward, so the meter reads as listening, not frozen.
+            rest = 0.05 + 0.035 * (1 + math.sin(now * 2.4 - out * 0.9)) / 2
+            height = 3 + (_METER_H - 3) * max(rest, voice) ** 0.85
+            bar.setFrame_(((i * 5.6, (_METER_H - height) / 2), (3, height)))
         if self._hint:
             self._set_clock()
 
@@ -998,7 +1029,7 @@ class Overlay:
         if not (self.show_words and self._words) or self._typed >= len(self._words):
             self._stop_ticker()
             return
-        self._typed = min(len(self._words), self._typed + _TYPE_RATE)
+        self._typed = min(len(self._words), (time.monotonic() - self._typing_from) * _TYPE_RATE)
         self._parts["words"].layer.setString_(self._typed_text(_POLISH_WIDTH - 2 * _BODY_PAD))
 
     # Flourishes
