@@ -63,6 +63,10 @@ class LocalWhisper:
     def cached(self) -> bool:
         return cached_model(self.model) is not None
 
+    @property
+    def loaded(self) -> bool:
+        return self._loaded
+
     def warm(self) -> None:
         """Starts loading the model without waiting. Call when the key goes down."""
         self._pool.submit(self._load)

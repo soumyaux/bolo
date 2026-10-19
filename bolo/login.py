@@ -3,13 +3,15 @@
 macOS gives the microphone and keyboard permissions to the app the user started. Started at
 login there is no Terminal or VS Code, so a small app bundle is made to hold those permissions.
 
-Run: uv run python -m bolo.login   (builds or updates ~/Applications/Bolo.app)
+Run: uv run python -m bolo.login              (builds or updates ~/Applications/Bolo.app)
+     uv run python -m bolo.login --at-login   (also starts it at login)
 """
 
 import hashlib
 import plistlib
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -91,3 +93,6 @@ def set_start_at_login(on: bool) -> None:
 
 if __name__ == "__main__":
     print(install_app())
+    if "--at-login" in sys.argv[1:]:
+        set_start_at_login(True)
+        print("Starts at login")

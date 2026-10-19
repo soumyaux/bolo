@@ -5,8 +5,11 @@ runs only when the text shows something the local pass cannot fix, and is droppe
 """
 
 import logging
+import os
+import platform
 import re
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -215,8 +218,13 @@ _FAILURES_TO_REST, _REST_SECONDS = 2, 300
 # A styled app ("prompt", "casual", "formal") still skips the LLM for clean text this short: the
 # local pass already applies the style's punctuation, and the LLM would add about 1 s.
 _SHORT_WORDS = 12
-# How long Ollama keeps a model loaded after its last use.
+# How long Ollama keeps a model loaded after its last use. The prompt model is big (4.8 GB) and
+# seldom used, so it is let go sooner; a burst of prompts still finds it loaded.
 _KEEP_ALIVE = "30m"
+_PROMPT_KEEP_ALIVE = "5m"
+# Ollama is restarted at most this often when it runs without the GPU, so a Mac that really
+# cannot use Metal never loops.
+_RESTART_EVERY = 600
 
 
 _OLLAMA = "http://127.0.0.1:11434"
@@ -226,6 +234,7 @@ _OLLAMA_BINARIES = [
     Path.home() / ".local/ollama/ollama",
     Path("/opt/homebrew/bin/ollama"),
     Path("/Applications/Ollama.app/Contents/Resources/ollama"),
+    Path.home() / "Applications/Ollama.app/Contents/Resources/ollama",
 ]
 
 
@@ -255,8 +264,79 @@ def start_ollama(url: str = _OLLAMA) -> bool:
     return True
 
 
+def _running(client: httpx.Client) -> dict[str, dict] | None:
+    """The models Ollama has loaded, by name, or None when it does not answer."""
+    try:
+        response = client.get("/api/ps", timeout=1)
+        response.raise_for_status()
+        return {model["name"]: model for model in response.json().get("models", [])}
+    except (httpx.HTTPError, KeyError, ValueError):
+        return None
+
+
+def on_gpu(client: httpx.Client, model: str) -> bool | None:
+    """Whether Ollama runs model on the GPU; None when it is not loaded or the server does not
+    answer. Only Apple Silicon is checked: an Intel Mac has no Metal path to expect."""
+    if platform.machine() != "arm64":
+        return None
+    loaded = (_running(client) or {}).get(model)
+    return None if loaded is None else loaded.get("size_vram", 0) > 0
+
+
+def _listening(port: str) -> list[str]:
+    return subprocess.run(["lsof", "-ti", f"tcp:{port}", "-sTCP:LISTEN"], capture_output=True, text=True).stdout.split()
+
+
+def _wait(done: Callable[[], bool], seconds: float) -> bool:
+    end = time.monotonic() + seconds
+    while not done():
+        if time.monotonic() > end:
+            return False
+        time.sleep(0.3)
+    return True
+
+
+def _answers(url: str) -> bool:
+    try:
+        httpx.get(f"{url}/api/version", timeout=1, trust_env=False)
+        return True
+    except httpx.HTTPError:
+        return False
+
+
+def restart_ollama(url: str = _OLLAMA) -> bool:
+    """Stops the Ollama server listening at url and starts it again. Only an `ollama serve` from a
+    known place, or the Ollama app, is touched. Returns True when it answers again."""
+    port = url.rsplit(":", 1)[-1].strip("/")
+    pids = _listening(port)
+    if pids:
+        command = subprocess.run(["ps", "-o", "command=", "-p", pids[0]], capture_output=True, text=True).stdout.strip()
+        binary = command.removesuffix(" serve")
+        found = shutil.which("ollama")
+        known = {str(path) for path in _OLLAMA_BINARIES} | ({found} if found else set())
+        known |= {str(Path(path).resolve()) for path in known}
+        if "Ollama.app/" in binary and binary in known:
+            # The Mac app runs the server itself; quitting and opening the app restarts it.
+            subprocess.run(["osascript", "-e", 'quit app "Ollama"'], capture_output=True)
+            if not _wait(lambda: not _listening(port), 5):
+                log.warning("Ollama did not quit; not restarted")
+                return False
+            subprocess.run(["open", "-a", "Ollama"], capture_output=True)
+            # A failed GPU check alone took 15 s.
+            return _wait(lambda: _answers(url), 30)
+        if not command.endswith(" serve") or binary not in known:
+            log.warning("not restarting the server on port %s: it is not a known Ollama (%s)", port, command[:80])
+            return False
+        os.kill(int(pids[0]), signal.SIGTERM)
+        if not _wait(lambda: not _listening(port), 5):
+            log.warning("Ollama did not stop; not restarted")
+            return False
+    return start_ollama(url) and _wait(lambda: _answers(url), 30)
+
+
 class Cleaner:
-    def __init__(self, cfg: dict):
+    def __init__(self, cfg: dict, on_status: Callable[[str | None], None] | None = None):
+        """on_status gets a warning for the menu, or None once it no longer applies."""
         cleanup = cfg["cleanup"]
         prompt_mode = cfg.get("prompt_mode", {})
         self.enabled = cleanup["enabled"]
@@ -268,6 +348,13 @@ class Cleaner:
         self.terms = cfg["dictionary"]["terms"]
         self.hints = cfg["dictionary"].get("hints", [])
         self.prompt_timeout = prompt_mode.get("timeout_seconds", 5)
+        self.prompt_keep_alive = prompt_mode.get("keep_alive", _PROMPT_KEEP_ALIVE)
+        self._on_status = on_status
+        # On the CPU every pass takes seconds, so the LLM is skipped until Ollama has the GPU again.
+        self.no_gpu = False
+        self._restarted = -float(_RESTART_EVERY)
+        # Held while a request runs, so Ollama is never restarted under one.
+        self._asking = threading.Lock()
         # Failures in a row and rest end, per model: a slow prompt model must not stop the cleanup.
         self._failures: dict[str, int] = {}
         self._rest_until: dict[str, float] = {}
@@ -303,6 +390,10 @@ class Cleaner:
             return ""
         have = {entry.get("name", "") for entry in tags.get("models", [])}
         have |= {name.removesuffix(":latest") for name in have}
+        if self.prompt_model not in have and self.model in have:
+            # The bigger prompt model is optional: lay out prompts with the cleanup model instead.
+            log.info("prompt model %s is not in Ollama; using %s for prompts", self.prompt_model, self.model)
+            self.prompt_model = self.model
         self.missing = [model for model in dict.fromkeys([self.model, self.prompt_model]) if model not in have]
         if self.missing:
             log.warning("cleanup model(s) missing from Ollama: %s", ", ".join(self.missing))
@@ -320,15 +411,59 @@ class Cleaner:
             for model in models:
                 try:
                     # A request without a prompt only loads the model.
-                    self._client.post("/api/generate", json={"model": model, "keep_alive": _KEEP_ALIVE}, timeout=60)
+                    self._client.post(
+                        "/api/generate", json={"model": model, "keep_alive": self._keep_alive(model)}, timeout=60
+                    )
                 except httpx.ConnectError:
                     # The server stopped: start it again, for the next dictation.
                     start_ollama(str(self._client.base_url).rstrip("/"))
                     return
                 except httpx.HTTPError as e:
                     log.info("cleanup model %s not warmed: %s", model, type(e).__name__)
+            self.check_gpu()
 
         threading.Thread(target=load, daemon=True).start()
+
+    def _keep_alive(self, model: str) -> str:
+        return self.prompt_keep_alive if model == self.prompt_model != self.model else _KEEP_ALIVE
+
+    def loaded(self, model: str) -> bool:
+        """Whether Ollama has model loaded now. About 1 ms."""
+        return self._client is not None and model in (_running(self._client) or {})
+
+    def check_gpu(self) -> None:
+        """Call once the cleanup model is loaded. When Ollama runs it on the CPU (it once lost Metal
+        after a restart), restarts Ollama, and tells the user if that did not help."""
+        if self._client is None:
+            return
+        gpu = on_gpu(self._client, self.model)
+        if gpu is not False:
+            if gpu and self.no_gpu:
+                self._set_no_gpu(False)
+            return
+        if time.monotonic() - self._restarted < _RESTART_EVERY or not self._asking.acquire(blocking=False):
+            return
+        try:
+            self._restarted = time.monotonic()
+            log.warning("Ollama is running on the CPU (no GPU); restarting it")
+            restart_ollama(str(self._client.base_url).rstrip("/"))
+            try:
+                self._client.post("/api/generate", json={"model": self.model, "keep_alive": _KEEP_ALIVE}, timeout=60)
+            except httpx.HTTPError as e:
+                log.info("cleanup model not loaded after the restart: %s", type(e).__name__)
+            gpu = on_gpu(self._client, self.model)
+        finally:
+            self._asking.release()
+        if gpu is False:
+            log.warning("Ollama is still on the CPU")
+        else:
+            log.info("Ollama is back on the GPU")
+        self._set_no_gpu(gpu is False)
+
+    def _set_no_gpu(self, no_gpu: bool) -> None:
+        self.no_gpu = no_gpu
+        if self._on_status:
+            self._on_status("Cleanup is slow: Ollama has no GPU" if no_gpu else None)
 
     def _resting(self, model: str) -> bool:
         return time.monotonic() < self._rest_until.get(model, 0)
@@ -353,6 +488,10 @@ class Cleaner:
 
     def _ask(self, system: str, text: str, timeout: float | None = None, model: str | None = None) -> str:
         model = model or self.model
+        with self._asking:
+            return self._ask_now(system, text, timeout, model)
+
+    def _ask_now(self, system: str, text: str, timeout: float | None, model: str) -> str:
         try:
             response = self._client.post(
                 "/api/chat",
@@ -364,7 +503,7 @@ class Cleaner:
                     ],
                     "stream": False,
                     "options": {"temperature": 0},
-                    "keep_alive": _KEEP_ALIVE,
+                    "keep_alive": self._keep_alive(model),
                 },
                 **({"timeout": timeout} if timeout else {}),
             )
@@ -398,7 +537,7 @@ class Cleaner:
         styled = style in _STYLES and len(text.split()) > _SHORT_WORDS
         if not self.enabled or self._client is None or self.model in self.missing or not (wanted or styled):
             return text, "fast"
-        if self._resting(self.model):
+        if self._resting(self.model) or self.no_gpu:
             return text, "llm-skipped"
         if on_llm:
             on_llm(self.model)
@@ -443,7 +582,14 @@ class Cleaner:
             or self._client is None
             or self.prompt_model in self.missing
             or self._resting(self.prompt_model)
+            or self.no_gpu
         ):
+            return normally(), "prompt-failed"
+        if not self.loaded(self.prompt_model):
+            # A cold load takes about 4 s of the time allowed. The cleanup model was tried in its place
+            # and left out details and made up questions, so the text is cleaned normally instead.
+            log.warning("prompt model %s not loaded: cleaned normally, loading it for next time", self.prompt_model)
+            self.warm(prompt=True)
             return normally(), "prompt-failed"
         system = _PROMPT.format(terms=", ".join(terms) or "none", hints=", ".join(self.hints) or "none")
         if on_llm:

@@ -6,6 +6,7 @@ user waiting about 9 s after letting go. Pieces are cut at pauses, so no word is
 
 import logging
 import threading
+import time
 from collections.abc import Callable
 
 from . import audio
@@ -87,3 +88,50 @@ class EarlyText:
         if self.failed or not self.texts:
             return None
         return " ".join(self.texts), self.done
+
+
+# Enough speech to hear "as a prompt" at the start, and short enough to be still talking after it.
+_PREFIX_SECONDS = 2.5
+
+
+class PrefixCheck:
+    """Listens to the first seconds of a dictation for a spoken prompt prefix, so the prompt model
+    (about 4 s to load) is loading while the user still speaks. Only the local model hears it:
+    Groq bills every request as 10 s. Tries once, and gives up when the key is let go first."""
+
+    def __init__(
+        self,
+        recorder: audio.Recorder,
+        transcribe: Callable[[bytes], str],
+        is_prompt: Callable[[str], bool],
+        on_prompt: Callable[[], None],
+        start: int,
+    ):
+        self._recorder = recorder
+        self._transcribe = transcribe
+        self._is_prompt = is_prompt
+        self._on_prompt = on_prompt
+        self._take = recorder.take
+        self._start = start
+        self._rate = recorder.sample_rate
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self) -> None:
+        want = int(_PREFIX_SECONDS * self._rate)
+        while True:
+            time.sleep(0.25)
+            if not self._recorder.recording or self._recorder.take != self._take:
+                return
+            samples = self._recorder.snapshot(self._take, self._start)
+            if len(samples) >= want:
+                break
+        speech = audio.prepare(samples[:want], self._rate)
+        if audio.seconds(speech, self._rate) < 0.3:
+            return
+        try:
+            text = self._transcribe(audio.to_flac(speech, self._rate))
+        except Exception as e:
+            log.info("prompt prefix check failed: %s", str(e)[:120])
+            return
+        if self._is_prompt(text):
+            self._on_prompt()
