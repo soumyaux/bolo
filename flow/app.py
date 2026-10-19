@@ -114,11 +114,6 @@ def permissions() -> dict[str, bool]:
     }
 
 
-def wispr_running() -> bool:
-    apps = NSWorkspace.sharedWorkspace().runningApplications()
-    return any((a.localizedName() or "") == "Wispr Flow" for a in apps)
-
-
 def open_up_front_app(learning: bool) -> None:
     """Lets the learning read the text field in the app the user is dictating into, and a browser
     show the address of its page, which picks the writing style."""
@@ -328,10 +323,7 @@ class FlowApp(rumps.App):
         return key if key in _KEYS and key != self.cfg["hotkey"]["push_to_talk"] else ""
 
     def _key_active(self, name: str) -> bool:
-        if name in (self.cfg["hotkey"]["push_to_talk"], self._prompt_key()):
-            return True
-        wispr = self.cfg["wispr"]
-        return wispr["takeover"] and name == wispr["wispr_key"] and not wispr_running()
+        return name in (self.cfg["hotkey"]["push_to_talk"], self._prompt_key())
 
     def _on_event(self, proxy, kind, event, refcon):
         if kind in (Quartz.kCGEventTapDisabledByTimeout, Quartz.kCGEventTapDisabledByUserInput):

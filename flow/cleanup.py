@@ -131,7 +131,7 @@ _EXAMPLE = "\n<example>\n<transcript>\n{raw}\n</transcript>\n<wanted>\n{final}\n
 
 def _sound_alike_terms(text: str, terms: list[str]) -> str:
     """Writes a dictionary term where speech recognition wrote something that sounds like it:
-    "impact UI" for "impact-ui", "Hinglis" for "Hinglish", "Wisper Flow" for "Wispr Flow". A
+    "git hub" for "GitHub", "Hinglis" for "Hinglish", "pie torch" for "PyTorch". A
     phrase made only of ordinary English words is never changed, so "cable" never becomes "table"
     here; that takes a learned correction."""
     for term in sorted(terms, key=len, reverse=True):

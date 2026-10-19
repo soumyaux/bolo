@@ -1,16 +1,10 @@
 [hotkey]
-# Hold this key to talk: "fn", "cmd_r", "alt_r" or "ctrl_r". It answers even while Wispr Flow
-# runs, so if this is Wispr's key too, quit Wispr or both apps will type.
+# Hold this key to talk: "fn", "cmd_r", "alt_r" or "ctrl_r".
 push_to_talk = "fn"
 # Opens the "fix last dictation" window (step 12).
 fix_last = "<ctrl>+<alt>+f"
 # Pastes a dictation that was saved because it could not be transcribed or pasted at the time.
 paste_saved = "<ctrl>+<alt>+v"
-
-[wispr]
-# When true and Wispr Flow is not running, also answer on wispr_key.
-takeover = true
-wispr_key = "fn"
 
 [audio]
 sample_rate = 16000
@@ -154,7 +148,6 @@ voice_keep_days = 14
 # Spelled exactly as written here. Add your own names and technical terms.
 terms = [
     "Claude Code",
-    "Wispr Flow",
     "Hinglish",
     "pyproject.toml",
     "uv",

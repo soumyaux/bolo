@@ -93,9 +93,6 @@ class _Actions(NSObject):
     def soundChosen_(self, sender):
         self.window.preview(sender)
 
-    def keyChanged_(self, sender):
-        self.window.check_keys()
-
 
 class SettingsWindow:
     """Call show(cfg) on the main thread. on_save(changes) gets {("section", "key"): value}; it raises
@@ -162,13 +159,7 @@ class SettingsWindow:
     def _general(self, view, top: float) -> None:
         y = top - _ROW
         self._label(view, "Talk key (hold to speak)", y)
-        self._talk = self._popup(view, [name for _, name in KEYS], y, action="keyChanged:")
-        y -= 32
-        self._warning = NSTextField.wrappingLabelWithString_("")
-        self._warning.setFrame_(NSMakeRect(_MARGIN + _LABEL, y - 2, 360, 30))
-        self._warning.setTextColor_(NSColor.systemOrangeColor())
-        self._warning.setFont_(NSFont.systemFontOfSize_(11))
-        view.addSubview_(self._warning)
+        self._talk = self._popup(view, [name for _, name in KEYS], y)
         y -= 34
         self._hands_free = self._check(view, "Double-tap the talk key for hands-free", y)
         y -= _ROW
@@ -240,7 +231,7 @@ class SettingsWindow:
         self._prefix = self._check(view, "Start with “as a prompt” or “prompt mode”", y)
         y -= _ROW
         self._label(view, "Or hold this key instead", y, x=_MARGIN + 18, width=_LABEL - 18)
-        self._prompt_key = self._popup(view, ["Off"] + [name for _, name in KEYS], y, width=140, action="keyChanged:")
+        self._prompt_key = self._popup(view, ["Off"] + [name for _, name in KEYS], y, width=140)
         y -= _ROW
         self._in_prompt_apps = self._check(view, "Always in apps with the “prompt” style", y)
 
@@ -309,7 +300,6 @@ class SettingsWindow:
         self._in_prompt_apps.setState_(get("prompt_mode", "in_prompt_apps", False))
         self._fill_running()
         self._message.setStringValue_("")
-        self.check_keys()
 
     def _fill_running(self) -> None:
         self._running.removeAllItems()
@@ -386,15 +376,6 @@ class SettingsWindow:
         }
 
     # Actions
-
-    def check_keys(self) -> None:
-        """Warns when a key is also Wispr Flow's: both apps would type while Wispr runs."""
-        wispr = self._cfg.get("wispr", {})
-        talk, prompt_key = self._key(self._talk), self._key(self._prompt_key)
-        clash = [k for k in (talk, prompt_key) if k and wispr.get("takeover") and k == wispr.get("wispr_key")]
-        self._warning.setStringValue_(
-            f"Wispr Flow uses {dict(KEYS)[clash[0]]} too: quit Wispr while using Bolo, or both will type." if clash else ""
-        )
 
     def preview(self, popup) -> None:
         title = str(popup.titleOfSelectedItem())
