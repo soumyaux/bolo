@@ -1,6 +1,6 @@
 """Menu bar app: hold the hotkey, speak, release; the text is pasted at the cursor.
 
-Run: uv run python -m flow.app
+Run: uv run python -m bolo.app
 """
 
 import atexit
@@ -37,7 +37,7 @@ from .stt.base import BadResult, RateLimited, SttError, Unavailable, flac_second
 from .stt.groq import GroqWhisper
 from .stt.local_whisper import LocalWhisper
 
-log = logging.getLogger("flow")
+log = logging.getLogger("bolo")
 
 IDLE, RECORDING, BUSY, WARN = "🎙", "🔴", "⏳", "⚠️"
 
@@ -204,7 +204,7 @@ def build_providers(cfg: dict) -> list:
     return providers
 
 
-class FlowApp(rumps.App):
+class BoloApp(rumps.App):
     def __init__(self, cfg: dict):
         super().__init__("Bolo", title=IDLE, quit_button="Quit")
         self.cfg = cfg
@@ -1029,7 +1029,7 @@ def main() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
     # Menu bar only: no Dock icon.
     NSBundle.mainBundle().infoDictionary()["LSUIElement"] = "1"
-    FlowApp(config.load()).run()
+    BoloApp(config.load()).run()
 
 
 if __name__ == "__main__":

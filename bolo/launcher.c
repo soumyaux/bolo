@@ -1,4 +1,4 @@
-// Bolo.app's executable, compiled by flow/login.py with ROOT and LOG set.
+// Bolo.app's executable, compiled by bolo/login.py with ROOT and LOG set.
 // It starts Python as a child instead of becoming Python: macOS then asks whether Bolo.app has
 // a permission, not whether Python does. A shell script here would make macOS check Python.
 #include <errno.h>
@@ -22,7 +22,7 @@ int main(void) {
         dup2(log, 1);
         dup2(log, 2);
     }
-    char *args[] = {ROOT "/.venv/bin/python", "-m", "flow.app", NULL};
+    char *args[] = {ROOT "/.venv/bin/python", "-m", "bolo.app", NULL};
     // Logging out or quitting from outside stops Python too.
     signal(SIGTERM, forward);
     signal(SIGINT, forward);

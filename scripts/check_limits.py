@@ -10,8 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import httpx
 
-from flow import config
-from flow.stt.base import blocked_by_network
+from bolo import config
+from bolo.stt.base import blocked_by_network
 
 
 def _limit_headers(response: httpx.Response) -> None:

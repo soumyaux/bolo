@@ -3,7 +3,7 @@
 macOS gives the microphone and keyboard permissions to the app the user started. Started at
 login there is no Terminal or VS Code, so a small app bundle is made to hold those permissions.
 
-Run: uv run python -m flow.login   (builds or updates ~/Applications/Bolo.app)
+Run: uv run python -m bolo.login   (builds or updates ~/Applications/Bolo.app)
 """
 
 import hashlib

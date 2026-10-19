@@ -12,11 +12,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from flow import audio, config
-from flow.app import build_providers
-from flow.cleanup import Cleaner
-from flow.learn import Learning
-from flow.stt.base import SttError
+from bolo import audio, config
+from bolo.app import build_providers
+from bolo.cleanup import Cleaner
+from bolo.learn import Learning
+from bolo.stt.base import SttError
 
 
 def main() -> None:

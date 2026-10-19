@@ -43,9 +43,9 @@ from mlx_whisper.load_models import load_model
 from mlx_whisper.tokenizer import get_tokenizer
 
 from accuracy import STOCK, evaluate, providers
-from flow import config
-from flow.learn import Learning
-from flow.learn.voice import NEEDED_MINUTES, TRAINED, Voice, held_out, training_text
+from bolo import config
+from bolo.learn import Learning
+from bolo.learn.voice import NEEDED_MINUTES, TRAINED, Voice, held_out, training_text
 
 
 class LoRALinear(nn.Module):

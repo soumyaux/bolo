@@ -15,12 +15,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from flow import config
-from flow.learn import Learning
-from flow.learn.voice import TRAINED, Voice, errors, held_out
-from flow.stt.base import RateLimited, SttError
-from flow.stt.groq import GroqWhisper
-from flow.stt.local_whisper import LocalWhisper
+from bolo import config
+from bolo.learn import Learning
+from bolo.learn.voice import TRAINED, Voice, errors, held_out
+from bolo.stt.base import RateLimited, SttError
+from bolo.stt.groq import GroqWhisper
+from bolo.stt.local_whisper import LocalWhisper
 
 STOCK = "mlx-community/whisper-large-v3-turbo"
 
