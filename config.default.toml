@@ -101,6 +101,10 @@ in_prompt_apps = false
 model = "qwen2.5:7b"
 # If the prompt takes longer than this, the plainly cleaned text is pasted instead.
 timeout_seconds = 5
+# How long the prompt model stays loaded after its last use (it takes about 4.8 GB). It is loaded
+# when a dictation starts with a prefix, while you speak; if it is not loaded in time, the text is
+# cleaned normally.
+keep_alive = "5m"
 
 [styles]
 # How text is written in each app: "prompt", "casual", "formal" or "default". A style changes

@@ -22,9 +22,8 @@ from ApplicationServices import AXIsProcessTrusted, AXIsProcessTrustedWithOption
 from PyObjCTools import AppHelper
 
 from . import audio, config, inject, login, sounds, styles
-from .usage import Usage
 from .cleanup import Cleaner, prompt_prefix
-from .early import EarlyText
+from .early import EarlyText, PrefixCheck
 from .learn import Learning, ax
 from .learn.ax_watch import Watcher
 from .learn.fix_window import FixWindow
@@ -33,9 +32,10 @@ from .learn.voice import Voice
 from .overlay import Overlay
 from .pending import Pending, Saved
 from .settings_window import SettingsWindow
-from .stt.base import BadResult, RateLimited, SttError, Unavailable, flac_seconds
+from .stt.base import BadResult, RateLimited, Unavailable, flac_seconds
 from .stt.groq import GroqWhisper
 from .stt.local_whisper import LocalWhisper, ensure_model
+from .usage import Usage
 
 log = logging.getLogger("bolo")
 
@@ -229,7 +229,7 @@ class BoloApp(rumps.App):
         ]
         self.recorder = audio.Recorder(cfg["audio"]["sample_rate"], cfg["audio"]["max_seconds"])
         self.chain = Chain(build_providers(cfg))
-        self.cleaner = Cleaner(cfg)
+        self.cleaner = Cleaner(cfg, self._cleanup_status)
         learning = cfg["learning"]
         self.learning = Learning(learning["enabled"])
         self.voice = None
@@ -479,7 +479,7 @@ class BoloApp(rumps.App):
         """Uses new settings without a restart. Keys, hands-free, mute, styles and prompt mode are
         read from self.cfg each time; the rest is rebuilt here."""
         self.cfg = cfg
-        self.cleaner = Cleaner(cfg)
+        self.cleaner = Cleaner(cfg, self._cleanup_status)
         threading.Thread(target=self._check_cleanup, daemon=True).start()
         self.sounds.update(cfg)
         self.overlay.show_words = cfg.get("overlay", {}).get("show_words", True)
@@ -582,11 +582,24 @@ class BoloApp(rumps.App):
                 provider.warm()
         self.cleaner.warm(prompt)
 
+    def _cleanup_status(self, warning: str | None) -> None:
+        """Shows that the cleanup is skipped because Ollama has no GPU, and when it is back."""
+        if self._problem:
+            return
+        busy = self.title not in (IDLE, WARN)
+        if warning:
+            self._show(self.title if busy else WARN, warning)
+        else:
+            self._show(self.title if busy else IDLE, "Cleanup back on the GPU")
+
     def _prompt_likely(self) -> bool:
-        """True when this dictation may well be a prompt: the prompt key is held, or the front app's
-        style is "prompt" (Cursor, VS Code). Read from the app list only, so it costs nothing."""
+        """True when this dictation will be a prompt unless said otherwise: the prompt key is held,
+        or every dictation in prompt-style apps is a prompt (in_prompt_apps) and one is in front.
+        Read from the app list only, so it costs nothing. A spoken prefix is caught by PrefixCheck."""
         if self._prompt_key_used:
             return True
+        if not self.cfg.get("prompt_mode", {}).get("in_prompt_apps", False):
+            return False
         app = NSWorkspace.sharedWorkspace().frontmostApplication()
         if app is None:
             return False
@@ -652,7 +665,10 @@ class BoloApp(rumps.App):
                     self._pill("listening")
                     open_up_front_app(learning=self.watcher is not None)
                     # Reload the models while the user is still speaking, if they were unloaded.
-                    self._warm_providers(self._prompt_likely())
+                    prompt = self._prompt_likely()
+                    self._warm_providers(prompt)
+                    if not prompt:
+                        self._check_prefix(sum(self._beep))
                     if self.watcher:
                         self.watcher.finish()
                     if self.cfg["audio"]["mute_while_recording"]:
@@ -756,6 +772,30 @@ class BoloApp(rumps.App):
         vocabulary = terms + self.cfg["dictionary"].get("hints", [])
         return EarlyText(
             self.recorder, self.chain.transcribe, vocabulary, start, seconds, lambda text: self._pill("heard", text)
+        )
+
+    def _check_prefix(self, start: int) -> None:
+        """Loads the prompt model as soon as the local model hears a spoken prefix such as "as a
+        prompt", while the user is still speaking. Skipped when the local model is not loaded (it
+        would take as long to load) or the prompt model already is."""
+        prompt_mode = self.cfg.get("prompt_mode", {})
+        local = next((p for p in self.chain.providers if isinstance(p, LocalWhisper)), None)
+        if not prompt_mode.get("use_prefix", True) or local is None or not local.loaded or not self.cleaner.enabled:
+            return
+        prefixes = prompt_mode.get("prefixes", _PROMPT_PREFIXES)
+        vocabulary = self.cfg["dictionary"].get("hints", [])
+
+        def heard() -> None:
+            if not self.cleaner.loaded(self.cleaner.prompt_model):
+                log.info("prompt prefix heard early: loading %s", self.cleaner.prompt_model)
+                self.cleaner.warm(prompt=True)
+
+        PrefixCheck(
+            self.recorder,
+            lambda flac: local.transcribe(flac, vocabulary),
+            lambda text: prompt_prefix(text, prefixes) is not None,
+            heard,
+            start,
         )
 
     def _stop_early(self) -> None:
