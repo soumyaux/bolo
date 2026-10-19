@@ -33,12 +33,12 @@ def check_groq(cfg: dict) -> None:
         )
     except httpx.HTTPError as e:
         if "CERTIFICATE_VERIFY_FAILED" in str(e):
-            print("  this network's web filter intercepts the connection, so it cannot be used here")
+            print("  a network filter intercepts the connection, so it cannot be used here")
         else:
             print(f"  cannot connect: {type(e).__name__}: {str(e)[:200]}")
         return
     if blocked_by_network(response):
-        print("  blocked by this network's web filter, so it cannot be used here")
+        print("  blocked by a network filter, so it cannot be used here")
         return
     if not api_key:
         print("  GROQ_API_KEY is not set in .env")

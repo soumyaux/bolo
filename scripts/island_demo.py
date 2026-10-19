@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
 from PyObjCTools import AppHelper
 
-from flow.overlay import Overlay
+from bolo.overlay import Overlay
 
 SPOKEN = (
     "so I think we should ship the notch island tomorrow, first make the meter a little calmer "

@@ -17,7 +17,7 @@ static void forward(int sig) {
 
 int main(void) {
     if (chdir(ROOT) != 0) return 1;
-    int log = open(LOG, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int log = open(LOG, O_WRONLY | O_CREAT | O_TRUNC, 0600);
     if (log >= 0) {
         dup2(log, 1);
         dup2(log, 2);

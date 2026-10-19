@@ -17,5 +17,5 @@ dependencies = [
 
 [tool.uv]
 package = false
-# Use the macOS keychain certificates (this network's TLS issuer is not in uv's bundled list).
+# Uses macOS keychain certificates (helps behind corporate TLS proxies).
 native-tls = true

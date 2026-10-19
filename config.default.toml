@@ -145,35 +145,9 @@ save_voice = true
 voice_keep_days = 14
 
 [dictionary]
-# Spelled exactly as written here. Add your own names and technical terms.
-terms = [
-    "Claude Code",
-    "Hinglish",
-    "pyproject.toml",
-    "uv",
-    "Cursor",
-    "Claude",
-    "CSS",
-    "impact-ui",
-]
+# Spelled exactly as written here: your own names, products and technical terms, one per line,
+# such as "GitHub" or "PyTorch". Settings › Dictionary edits these too.
+terms = []
 # Words you say often. They help the speech model hear them and the cleanup pass fix sound-alike
 # mistakes ("site banner" for "side panel"), but their spelling is not forced like terms above.
-hints = [
-    "side panel",
-    "dropdown",
-    "accordion",
-    "padding",
-    "spacing",
-    "gap",
-    "layout",
-    "custom CSS",
-    "card",
-    "select",
-    "label",
-    "legend",
-    "table",
-    "audit log",
-    "root cause",
-    "button",
-    "as a prompt",
-]
+hints = []

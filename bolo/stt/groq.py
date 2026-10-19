@@ -2,7 +2,7 @@
 
 Docs: https://console.groq.com/docs/speech-to-text
 A background check keeps track of whether Groq can be reached, so when the network is down or
-the company web filter blocks it, dictation goes straight to the local model without waiting
+a network filter blocks it, dictation goes straight to the local model without waiting
 for a timeout. The same connection is reused for the check and the requests, so each request
 skips the TLS handshake.
 """
@@ -215,7 +215,7 @@ class GroqWhisper:
             self._set(False, type(e).__name__)
             return False
         if blocked_by_network(response):
-            self._set(False, "blocked by the web filter")
+            self._set(False, "blocked by a network filter")
         elif response.status_code in (401, 403):
             self._set(False, f"key rejected, HTTP {response.status_code}")
         else:

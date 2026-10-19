@@ -41,7 +41,7 @@ def flac_seconds(flac: bytes) -> float:
 
 
 def blocked_by_network(response: httpx.Response) -> bool:
-    """True when a company web filter answered instead of the provider."""
+    """True when a network filter answered instead of the provider."""
     return response.headers.get("server", "").lower().startswith("zscaler")
 
 
@@ -50,7 +50,7 @@ def raise_for_status(name: str, response: httpx.Response) -> None:
     if response.is_success:
         return
     if blocked_by_network(response):
-        raise Unavailable(f"{name}: blocked by this network's web filter")
+        raise Unavailable(f"{name}: blocked by a network filter")
     detail = response.text[:300].replace("\n", " ")
     if response.status_code == 429:
         retry = response.headers.get("retry-after")

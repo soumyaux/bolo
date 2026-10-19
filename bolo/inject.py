@@ -64,8 +64,7 @@ def paste(text: str, restore_delay: float = 0.4) -> None:
         return
     if not can_paste():
         raise InjectError(
-            "Accessibility permission is missing. Enable it for the app that launched this "
-            "script in System Settings > Privacy & Security > Accessibility."
+            "Bolo needs Accessibility: System Settings › Privacy & Security › Accessibility."
         )
     pb = NSPasteboard.generalPasteboard()
     saved = _snapshot(pb)
