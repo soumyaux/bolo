@@ -353,6 +353,7 @@ _MESSAGE_LOOK = {
     "warn": ("exclamationmark.triangle.fill", [_AMBER]),
     "error": ("xmark.octagon.fill", [_RED]),
     "cancel": ("xmark.circle.fill", [_c(1, 1, 1, 0.5)]),
+    "copy": ("doc.on.clipboard.fill", [_c(0.35, 0.88, 1), _BLUE]),
 }
 
 
@@ -463,7 +464,7 @@ class Overlay:
         self._after(_DONE_SECONDS, self.hide)
 
     def message(self, text: str, seconds: float = _MESSAGE_SECONDS, kind: str = "info") -> None:
-        """Shows text for a few seconds, then hides. kind is info, warn, error or cancel."""
+        """Shows text for a few seconds, then hides. kind is info, warn, error, cancel or copy."""
         self._message = (text, kind if kind in _MESSAGE_LOOK else "info")
         self._go("message")
         if kind == "error":
@@ -751,6 +752,7 @@ class Overlay:
         self._cancel_later()
         if state not in _ACTIVE:
             self._hover = False
+            self._panel.setIgnoresMouseEvents_(True)
         self._render(opening=was == "hidden")
         typing = state == "polishing" and self.show_words and self._words
         if state == "listening" or typing:

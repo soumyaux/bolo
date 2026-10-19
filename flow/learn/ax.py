@@ -62,8 +62,8 @@ def _get(element, attribute: str):
     return value if error == 0 else None
 
 
-def focused() -> Field | None:
-    """The text field that has the keyboard focus, with its text."""
+def _focused_element():
+    """The element that has the keyboard focus, or None when it cannot be read."""
     system = AXUIElementCreateSystemWide()
     AXUIElementSetMessagingTimeout(system, _TIMEOUT_SECONDS)
     element = _get(system, "AXFocusedUIElement")
@@ -76,13 +76,55 @@ def focused() -> Field | None:
         app = AXUIElementCreateApplication(front.processIdentifier())
         AXUIElementSetMessagingTimeout(app, _TIMEOUT_SECONDS)
         element = _get(app, "AXFocusedUIElement")
+    if element is not None:
+        AXUIElementSetMessagingTimeout(element, _TIMEOUT_SECONDS)
+    return element
+
+
+def focused() -> Field | None:
+    """The text field that has the keyboard focus, with its text."""
+    element = _focused_element()
     if element is None:
         return None
-    AXUIElementSetMessagingTimeout(element, _TIMEOUT_SECONDS)
     if _SECURE in (_get(element, "AXRole"), _get(element, "AXSubrole")):
         return None
     text = value(element)
     return Field(element, text) if text is not None else None
+
+
+_TEXT_ROLES = {"AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"}
+# Focus on one of these means no text box has the keyboard: a paste would go nowhere, or paste
+# files or shapes instead of text. Other roles (a group, a web page, a window) may hold a text
+# box that the app does not describe, as terminals and some editors do, so those still paste.
+_NOT_TEXT_ROLES = {
+    "AXList", "AXOutline", "AXTable", "AXBrowser", "AXGrid", "AXRow", "AXCell", "AXColumn",
+    "AXButton", "AXMenuButton", "AXPopUpButton", "AXCheckBox", "AXRadioButton", "AXDisclosureTriangle",
+    "AXImage", "AXLink", "AXStaticText", "AXSlider", "AXIncrementor", "AXColorWell", "AXTabGroup",
+    "AXToolbar", "AXMenuBar", "AXMenuBarItem", "AXMenu", "AXMenuItem", "AXDockItem",
+}
+_FINDER = "com.apple.finder"
+
+
+def typing_target() -> tuple[bool | None, str]:
+    """Whether a paste now would land in a text box: True, False, or None when it cannot be told.
+    Also returns what has the focus, for the log, such as "AXList in Finder"."""
+    front = NSWorkspace.sharedWorkspace().frontmostApplication()
+    app = (front.localizedName() or front.bundleIdentifier() or "?") if front else "?"
+    element = _focused_element()
+    role = _get(element, "AXRole") if element is not None else None
+    where = f"{role or 'nothing readable'} in {app}"
+    if role is None:
+        # The desktop: Finder in front with no window and nothing focused.
+        if front is not None and front.bundleIdentifier() == _FINDER and not _get(
+            AXUIElementCreateApplication(front.processIdentifier()), "AXFocusedWindow"
+        ):
+            return False, where
+        return None, where
+    if role in _TEXT_ROLES or _get(element, "AXEditableAncestor") is not None:
+        return True, where
+    if role in _NOT_TEXT_ROLES or (front is not None and front.bundleIdentifier() == _FINDER):
+        return False, where
+    return None, where
 
 
 class Place(NamedTuple):

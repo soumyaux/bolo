@@ -811,8 +811,13 @@ class FlowApp(rumps.App):
             self._show(IDLE, f"You switched windows: {self._paste_label()} to paste")
             self._pill("message", f"You switched windows. Press {self._paste_label()} to paste it here.", 4, "warn")
             return
+        # With no text box to take it, the text goes on the clipboard and the island says so.
+        typing, where = ax.typing_target()
         try:
-            inject.paste(text)
+            if typing is False:
+                inject.copy(text)
+            else:
+                inject.paste(text)
         except inject.InjectError as e:
             log.warning("paste failed, text saved: %s", e)
             self.pending.add_text(text, raw, app)
@@ -831,15 +836,19 @@ class FlowApp(rumps.App):
         self.usage.add("words", len(text.split()))
         self.usage.add("speaking_seconds", len(clip) / rate)
         self.usage.add("waiting_seconds", time.perf_counter() - start)
-        if self.watcher and dictation_id:
+        if self.watcher and dictation_id and typing is not False:
             self.watcher.watch(dictation_id, text)
         log.info(
-            "%s: %.1f s audio (%.0f s heard early), %d chars, speech %.2f s, cleanup %s %.2f s, style=%s",
+            "%s: %.1f s audio (%.0f s heard early), %d chars, speech %.2f s, cleanup %s %.2f s, style=%s, %s %s",
             provider, len(clip) / rate, before[1] / rate if before else 0, len(text), heard, route, total - heard,
-            target.style,
+            target.style, "copied, focus on" if typing is False else "pasted into", where,
         )
-        self._show(IDLE, f"Last: {provider}, {total:.1f} s")
         AppHelper.callAfter(self._refresh_usage)
+        if typing is False:
+            self._show(IDLE, "Copied: no text box was selected")
+            self._pill("message", "Copied. Click a text box and press ⌘V", 4, "copy")
+            return
+        self._show(IDLE, f"Last: {provider}, {total:.1f} s")
         if route in ("prompt-failed", "prompt-timeout"):
             self.sounds.play("error")
             self._pill("message", "Couldn't write the prompt: pasted plain text", 3, "error")
