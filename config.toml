@@ -40,6 +40,11 @@ start = "Tink"
 stop = "Pop"
 error = "Basso"
 
+[overlay]
+# While the cleanup model works, the island under the notch shows the words it is cleaning.
+# Turn off if you share your screen.
+show_words = true
+
 [recovery]
 # When a dictation cannot be transcribed, its audio is kept and tried again in the background.
 # Saved audio and text are deleted once pasted, or after this many hours.

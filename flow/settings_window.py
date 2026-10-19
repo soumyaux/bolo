@@ -197,6 +197,8 @@ class SettingsWindow:
         self._early = self._check(view, "Write long dictations while I speak", y)
         y -= _ROW
         self._guard = self._check(view, "Don't paste if I switch windows", y)
+        y -= _ROW
+        self._show_words = self._check(view, "Show my words in the island while writing", y)
 
     def _dictionary(self, view, top: float) -> None:
         half = (_WIDTH - 2 * _MARGIN - 40 - 16) / 2
@@ -297,6 +299,7 @@ class SettingsWindow:
         self._learning.setState_(get("learning", "auto_capture", True))
         self._early.setState_(bool(get("audio", "chunk_seconds", 6)))
         self._guard.setState_(get("audio", "guard_window", True))
+        self._show_words.setState_(get("overlay", "show_words", True))
         self._terms.setString_("\n".join(get("dictionary", "terms", [])))
         self._hints.setString_("\n".join(get("dictionary", "hints", [])))
         self._apps = [[key, style] for key, style in cfg.get("styles", {}).get("apps", {}).items()]
@@ -362,6 +365,7 @@ class SettingsWindow:
             ("audio", "mute_while_recording"): bool(self._mute.state()),
             ("audio", "chunk_seconds"): old_chunk if self._early.state() else 0,
             ("audio", "guard_window"): bool(self._guard.state()),
+            ("overlay", "show_words"): bool(self._show_words.state()),
             ("sounds", "enabled"): bool(self._sounds_on.state()),
             ("sounds", "volume"): round(self._volume.doubleValue(), 2),
             ("sounds", "start"): sound("start"),

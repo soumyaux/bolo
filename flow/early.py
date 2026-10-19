@@ -21,7 +21,8 @@ _SEARCH_SECONDS = 6
 
 class EarlyText:
     """Runs from key down to key up. start is the first sample to use, after the start sound.
-    transcribe takes (FLAC, vocabulary) and returns (text, provider name), as Chain.transcribe does."""
+    transcribe takes (FLAC, vocabulary) and returns (text, provider name), as Chain.transcribe does.
+    on_text gets the text so far each time a piece is done."""
 
     def __init__(
         self,
@@ -30,10 +31,12 @@ class EarlyText:
         vocabulary: list[str],
         start: int,
         seconds: float,
+        on_text: Callable[[str], None] | None = None,
     ):
         self._recorder = recorder
         self._transcribe = transcribe
         self._vocabulary = vocabulary
+        self._on_text = on_text
         self._take = recorder.take
         self._rate = recorder.sample_rate
         self._piece = int(seconds * self._rate)
@@ -68,6 +71,8 @@ class EarlyText:
                     return
                 if text:
                     self.texts.append(text)
+                    if self._on_text:
+                        self._on_text(" ".join(self.texts))
             self.done += at
 
     def stop(self) -> None:

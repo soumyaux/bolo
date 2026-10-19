@@ -274,7 +274,9 @@ class FlowApp(rumps.App):
         # True while a clip is being turned into text; Esc then cancels the paste.
         self._writing = False
         self._cancelled = threading.Event()
-        self.overlay = Overlay(lambda: self.recorder.level, self._cancel)
+        self.overlay = Overlay(
+            lambda: self.recorder.level, self._cancel, cfg.get("overlay", {}).get("show_words", True)
+        )
         # The output device Bolo muted, or 0 when it muted none.
         self._muted = 0
         self.sounds = sounds.Sounds(cfg)
@@ -446,7 +448,7 @@ class FlowApp(rumps.App):
             self._commands.put("cancel")
         elif self._writing:
             self._cancelled.set()
-            self._pill("message", "Cancelled")
+            self._pill("message", "Cancelled", 1.2, "cancel")
 
     def _pill(self, method: str, *args) -> None:
         AppHelper.callAfter(getattr(self.overlay, method), *args)
@@ -456,6 +458,9 @@ class FlowApp(rumps.App):
             self.title = title
             if status is not None:
                 self.status.title = status
+                # What the island shows when the user hovers on the notch.
+                if title in (IDLE, WARN):
+                    self.overlay.ready(status, title == IDLE)
 
         AppHelper.callAfter(apply)
 
@@ -484,6 +489,7 @@ class FlowApp(rumps.App):
         self.cfg = cfg
         self.cleaner = Cleaner(cfg)
         self.sounds.update(cfg)
+        self.overlay.show_words = cfg.get("overlay", {}).get("show_words", True)
         learning = cfg["learning"]
         if learning["enabled"] and learning["auto_capture"]:
             self.watcher = self.watcher or Watcher(self._learn)
@@ -654,13 +660,13 @@ class FlowApp(rumps.App):
                     # It may be the first half of a double tap; a second press replaces the message.
                     log.info("dropped: too short (key held under %.1f s)", _TAP_SECONDS)
                     key = _KEY_LABELS.get(self.cfg["hotkey"]["push_to_talk"], "the key")
-                    self._pill("message", f"Too short: hold {key} while you speak", 1.5)
+                    self._pill("message", f"Too short: hold {key} while you speak", 1.5, "warn")
                 elif command == "cancel":
                     self._stop_early()
                     self.recorder.stop()
                     self._restore_sound()
                     self._show(IDLE)
-                    self._pill("message", "Cancelled")
+                    self._pill("message", "Cancelled", 1.2, "cancel")
                 elif command == "up":
                     if not self.recorder.recording:
                         # The microphone never opened; its error is already showing.
@@ -685,17 +691,17 @@ class FlowApp(rumps.App):
                     if self.recorder.silent:
                         log.info("dropped: the microphone sent no audio")
                         self._show(WARN, "The microphone sent no audio: try again")
-                        self._pill("message", "The microphone sent no audio. Try again.", 3)
+                        self._pill("message", "The microphone sent no audio. Try again.", 3, "warn")
                         continue
                     if length < self.cfg["audio"]["min_seconds"]:
                         log.info("dropped: too short (%.2f s of audio)", length)
                         self._show(IDLE, "Too short")
-                        self._pill("message", "Too short: nothing heard")
+                        self._pill("message", "Too short: nothing heard", 1.6, "warn")
                         continue
                     if peak < _QUIET_DBFS:
                         log.info("dropped: too quiet (peak %.0f dBFS, %.1f s)", peak, length)
                         self._show(IDLE, "Too quiet: nothing heard")
-                        self._pill("message", "Too quiet: nothing heard. Is the right mic on?", 2.5)
+                        self._pill("message", "Too quiet: nothing heard. Is the right mic on?", 2.5, "warn")
                         continue
                     threading.Thread(
                         target=self._dictate,
@@ -712,7 +718,7 @@ class FlowApp(rumps.App):
                 self.sounds.play("error")
                 problem = str(e) if isinstance(e, audio.MicError) else "Something went wrong. Details are in Bolo.log"
                 self._show(WARN, problem[:80])
-                self._pill("message", problem[:60], 4)
+                self._pill("message", problem[:80], 4, "error")
                 if command != "down":
                     # Never leave the speakers muted after a failure.
                     try:
@@ -730,7 +736,9 @@ class FlowApp(rumps.App):
             return None
         terms = self.learning.terms(self.cfg["dictionary"]["terms"])
         vocabulary = terms + self.cfg["dictionary"].get("hints", [])
-        return EarlyText(self.recorder, self.chain.transcribe, vocabulary, start, seconds)
+        return EarlyText(
+            self.recorder, self.chain.transcribe, vocabulary, start, seconds, lambda text: self._pill("heard", text)
+        )
 
     def _stop_early(self) -> None:
         if self._early:
@@ -742,7 +750,7 @@ class FlowApp(rumps.App):
     ) -> None:
         with self._paste_lock:
             self._show(BUSY)
-            self._pill("busy")
+            self._pill("transcribing")
             self._cancelled.clear()
             self._writing = True
             try:
@@ -772,7 +780,7 @@ class FlowApp(rumps.App):
             if audio.seconds(speech, rate) < self.cfg["audio"]["min_seconds"]:
                 log.info("dropped: no speech found in %.1f s of audio", len(clip) / rate)
                 self._show(IDLE, "Nothing heard")
-                self._pill("message", "Nothing heard")
+                self._pill("message", "Nothing heard", 1.6, "warn")
                 return
             flac = audio.to_flac(speech, rate)
         try:
@@ -786,7 +794,7 @@ class FlowApp(rumps.App):
             AppHelper.callAfter(self._refresh_saved)
             self.sounds.play("error")
             self._show(WARN, "Could not transcribe: audio saved, trying again")
-            self._pill("message", "Couldn't transcribe. Don't worry, your audio is saved and will be tried again.", 4)
+            self._pill("message", "Couldn't transcribe. Don't worry, your audio is saved and will be tried again.", 4, "error")
             return
         total = time.perf_counter() - start
         if self._cancelled.is_set():
@@ -801,7 +809,7 @@ class FlowApp(rumps.App):
             self.pending.add_text(text, raw, app)
             AppHelper.callAfter(self._refresh_saved)
             self._show(IDLE, f"You switched windows: {self._paste_label()} to paste")
-            self._pill("message", f"You switched windows. Press {self._paste_label()} to paste it here.", 4)
+            self._pill("message", f"You switched windows. Press {self._paste_label()} to paste it here.", 4, "warn")
             return
         try:
             inject.paste(text)
@@ -811,7 +819,7 @@ class FlowApp(rumps.App):
             AppHelper.callAfter(self._refresh_saved)
             self.sounds.play("error")
             self._show(WARN, "Could not paste: text saved")
-            self._pill("message", f"Couldn't paste. Text saved: press {self._paste_label()} to paste it.", 4)
+            self._pill("message", f"Couldn't paste. Text saved: press {self._paste_label()} to paste it.", 4, "error")
             return
         dictation_id = self.learning.record(app, raw, text, "prompt" if route == "prompt" else "")
         # A prompt is laid out unlike what was said, so it cannot teach the speech model.
@@ -834,9 +842,10 @@ class FlowApp(rumps.App):
         AppHelper.callAfter(self._refresh_usage)
         if route in ("prompt-failed", "prompt-timeout"):
             self.sounds.play("error")
-            self._pill("message", "Couldn't write the prompt: pasted plain text", 3)
+            self._pill("message", "Couldn't write the prompt: pasted plain text", 3, "error")
         else:
-            self._pill("hide")
+            words = len(text.split())
+            self._pill("done", f"Pasted · {words} word{'' if words == 1 else 's'}")
 
     def _save_voice(self, dictation_id: int, clip) -> None:
         """Keeps the clip for voice training, in the form the speech models hear it. Whisper hears
@@ -873,16 +882,25 @@ class FlowApp(rumps.App):
             text = text if rest is None else rest
             if not text.strip():
                 return raw, "", provider, "prompt", heard
-            if target:
-                self._pill("busy", "Writing prompt…")
             text, route = self.cleaner.to_prompt(
-                text, terms=terms, examples=self.learning.examples(text, app), style=style
+                text, terms=terms, examples=self.learning.examples(text, app), style=style,
+                on_llm=self._polishing(text, True) if target else None,
             )
         else:
             text, route = self.cleaner.clean(
-                text, terms=terms, examples=self.learning.examples(text, app), style=style
+                text, terms=terms, examples=self.learning.examples(text, app), style=style,
+                on_llm=self._polishing(text, False) if target else None,
             )
         return raw, text, provider, route, heard
+
+    def _polishing(self, text: str, prompt: bool):
+        """Tells the island the cleanup model has started on text, unless the user cancelled."""
+
+        def started(model: str) -> None:
+            if not self._cancelled.is_set():
+                self._pill("polishing", text, model, prompt)
+
+        return started
 
     def _paste_label(self) -> str:
         return self.cfg["hotkey"].get("paste_saved", "").replace("<ctrl>", "⌃").replace("<alt>", "⌥").replace(

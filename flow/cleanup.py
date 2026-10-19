@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -353,12 +354,14 @@ class Cleaner:
         terms: list[str] | None = None,
         examples: list[tuple[str, str]] | None = None,
         style: str = "default",
+        on_llm: Callable[[str], None] | None = None,
     ) -> tuple[str, str]:
         """Returns the text to paste and the route taken: "fast", "llm" or "llm-skipped".
 
         already_clean is for text a provider has cleaned itself; only Hindi script is fixed then.
         terms replaces the dictionary from the config, and examples are past corrections to imitate.
         style is the writing style of the app the text goes into; any but "default" needs the LLM.
+        on_llm is called with the model's name just before the LLM is asked, so the UI can say so.
         """
         terms = self.terms if terms is None else terms
         text = raw.strip() if already_clean else tidy(raw, terms, style)
@@ -368,6 +371,8 @@ class Cleaner:
             return text, "fast"
         if self._resting(self.model):
             return text, "llm-skipped"
+        if on_llm:
+            on_llm(self.model)
         try:
             cleaned = self._llm(text, terms, examples or [], style)
         except (httpx.HTTPError, KeyError, ValueError) as e:
@@ -392,11 +397,12 @@ class Cleaner:
         terms: list[str] | None = None,
         examples: list[tuple[str, str]] | None = None,
         style: str = "default",
+        on_llm: Callable[[str], None] | None = None,
     ) -> tuple[str, str]:
         """Prompt mode: lays the speech out as a structured prompt. Returns the text to paste and the
         route: "prompt" when it worked; otherwise the normally cleaned text and "prompt-failed", or,
         after a timeout, the local text and "prompt-timeout" so the wait does not grow further.
-        examples and style are for that normal cleanup."""
+        examples and style are for that normal cleanup. on_llm is as for clean()."""
         terms = self.terms if terms is None else terms
 
         def normally() -> str:
@@ -406,6 +412,8 @@ class Cleaner:
         if not self.enabled or self._client is None or self._resting(self.prompt_model):
             return normally(), "prompt-failed"
         system = _PROMPT.format(terms=", ".join(terms) or "none", hints=", ".join(self.hints) or "none")
+        if on_llm:
+            on_llm(self.prompt_model)
         try:
             result = self._ask(system, text, self.prompt_timeout, self.prompt_model)
         except httpx.TimeoutException:
