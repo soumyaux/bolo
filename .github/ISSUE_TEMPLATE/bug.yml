@@ -1,0 +1,40 @@
+name: Bug report
+description: Something does not work as it should
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: macOS 15.2
+    validations:
+      required: true
+  - type: input
+    id: mac
+    attributes:
+      label: Mac model
+      placeholder: MacBook Air M2
+    validations:
+      required: true
+  - type: dropdown
+    id: engine
+    attributes:
+      label: Speech engine
+      options:
+        - Groq and local
+        - Local only
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log excerpt
+      description: The lines around the problem from ~/Library/Logs/Bolo.log.
+      render: text
