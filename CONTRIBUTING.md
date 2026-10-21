@@ -37,11 +37,13 @@ Small commits with a [Conventional Commits](https://www.conventionalcommits.org/
 
 Users get Bolo from the newest release tag, not from `main`, so pushing to `main` never reaches them by itself.
 
-1. Bump `version` in `pyproject.toml` and add a section to `CHANGELOG.md`.
-2. Commit, then tag and push: `git tag -a v0.2.0 -m "Bolo 0.2.0" && git push origin main v0.2.0`.
-3. On GitHub, open **Releases › Draft a new release**, pick the tag, and paste the CHANGELOG section.
+Versions follow `MAJOR.MINOR.PATCH`: bump PATCH for fixes (0.1.1), MINOR for new features (0.2.0), MAJOR for big changes that break existing setups.
 
-Within a few hours every running Bolo shows **Update to Bolo 0.2.0…** in its menu. To try `main` before a release, run the installer with `BOLO_REF=main`.
+1. Add a section to `CHANGELOG.md` saying what changed for users, for example `## 0.2.0 (2026-11-02)`.
+2. Run `scripts/release.sh 0.2.0`. It runs the tests, bumps the version, commits, tags `v0.2.0` and pushes.
+3. Optional: publish release notes on GitHub. The script prints the link.
+
+Within 6 hours every running Bolo shows **Update to Bolo 0.2.0…** in its menu. To try `main` before a release, run the installer with `BOLO_REF=main`.
 
 ## Privacy rules
 

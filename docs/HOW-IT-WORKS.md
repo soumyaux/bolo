@@ -33,7 +33,7 @@ After a paste, Bolo can watch the text field for up to 90 s and learn from how y
 | `bolo/login.py`, `bolo/launcher.c` | Builds `~/Applications/Bolo.app` and the start-at-login item |
 | `bolo/setup.py` | Steps used by `install.sh` |
 | `bolo/updates.py` | Finds new releases and runs the installer to update |
-| `scripts/` | Developer tools: accuracy test, provider bake-off, voice training, limits check |
+| `scripts/` | Developer tools: `release.sh` to publish a version, accuracy test, provider bake-off, voice training, limits check |
 
 ## What is stored, and where
 
