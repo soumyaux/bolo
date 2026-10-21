@@ -28,5 +28,8 @@ git commit -q -m "release: $version"
 git tag -a "v$version" -m "Bolo $version"
 git push -q origin main "v$version"
 
+# The GitHub Release page, with this version's changelog section as its notes.
+awk -v v="$version" '$0 ~ "^## "v" " {f=1; next} /^## /{f=0} f' CHANGELOG.md \
+  | gh release create "v$version" --title "Bolo $version" --notes-file - --latest
+
 echo "Released v$version."
-echo "Optional: add release notes at https://github.com/soumyaux/bolo/releases/new?tag=v$version"
