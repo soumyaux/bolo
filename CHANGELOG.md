@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0 (2026-10-21)
+
+A new look in white and blue.
+
+- New app icon: a bold blue b on white.
+- The menu bar shows a b instead of 🎙; 🔵 while listening.
+- The Dynamic Island uses blue accents, with a green check when text is pasted.
+- README pictures redrawn in white and blue.
+
 ## 0.1.0 (2026-10-19)
 
 First public release.
