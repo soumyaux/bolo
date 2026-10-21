@@ -24,7 +24,7 @@ Run from a terminal, macOS asks for the permissions for the terminal app, not Bo
 
 ```bash
 uv run pytest
-uvx ruff check bolo tests
+uv run ruff check bolo tests scripts
 ```
 
 Add a test when you change logic that does not need a microphone or macOS APIs (see `tests/`).

@@ -1,97 +1,114 @@
-# Bolo
+<p align="center">
+  <img src="assets/icon.png" alt="Bolo" width="110">
+</p>
 
-**Hold a key, speak, let go: your words are typed wherever the cursor is.** Free, open-source push-to-talk dictation for Apple Silicon Macs that can run 100% offline.
+<h1 align="center">Bolo</h1>
 
-<img src="assets/icon.png" alt="Bolo" width="96">
+<p align="center">
+  <b>Hold a key, speak, let go. Your words appear wherever you're typing.</b><br>
+  Free, open-source dictation for Apple Silicon Macs. Works fully offline if you want it to.
+</p>
 
-## Features
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="#how-to-use-it">How to use it</a> ·
+  <a href="#privacy">Privacy</a> ·
+  <a href="#troubleshooting">Troubleshooting</a>
+</p>
 
-- **Push to talk.** Hold `fn`, speak, let go. The text is pasted into any app.
-- **Hands-free.** Double-tap `fn` to keep recording until the next tap. Esc cancels.
-- **Fast and accurate.** Whisper large-v3 on Groq's free tier when you add a key, and Whisper large-v3-turbo on your Mac as an instant, offline fallback (or the only engine).
-- **Clean text.** Fillers and repeats removed; punctuation and lists fixed by a small local model in [Ollama](https://ollama.com).
-- **Writing styles per app.** Casual in Slack, formal in Mail, structured prompts in Cursor and VS Code.
-- **Prompt mode.** Start with "as a prompt…" and your rambling becomes a structured prompt for an AI tool.
-- **Learns your words.** Fix a mis-heard word once (⌃⌥F, or just edit the pasted text) and Bolo gets it right next time. Add your own names and terms in Settings.
-- **Never loses a dictation.** If transcription fails, the audio is kept and retried; ⌃⌥V pastes it when ready.
-- **Dynamic Island.** A small island under the notch shows what Bolo is doing.
+---
 
-## Requirements
+*Bolo* (बोलो) means "speak" in Hindi.
 
-- A Mac with Apple Silicon (M1 or newer)
-- macOS 13 Ventura or newer
-- About 4 GB of free disk space (speech model 1.5 GB, optional cleanup model 2 GB)
+## What it does
+
+You hold `fn`, say what you want to write, and let go. A second later the text is typed into whatever app you're in: Slack, Mail, Notes, VS Code, a browser, anything with a text box.
+
+- **Clean text, not a transcript.** "Um", "uh" and repeated words are removed, and punctuation and lists are fixed.
+- **Fits the app.** Casual in Slack, formal in Mail, structured in code editors.
+- **Prompt mode.** Start with *"as a prompt…"* and your rambling becomes a tidy prompt for ChatGPT, Claude or Cursor.
+- **Learns your words.** Correct a name once and Bolo spells it right from then on.
+- **Never loses what you said.** If transcription fails, the audio is kept and retried.
+- **Private by default.** Without an API key, nothing leaves your Mac.
+
+## Before you start
+
+You need:
+
+- A Mac with **Apple Silicon** (M1, M2, M3, M4 or newer). Intel Macs are not supported.
+- **macOS 13 Ventura** or newer.
+- About **4 GB** of free disk space.
+- 5 to 10 minutes. Most of it is download time.
+
+To check your Mac, open the Apple menu  › **About This Mac**. "Chip" should say Apple M-something.
 
 ## Install
+
+**1. Open Terminal.** Press `⌘ Space`, type **Terminal**, and press Return.
+
+**2. Paste this line and press Return:**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/soumyaux/bolo/main/install.sh | bash
 ```
 
-The installer sets up everything (Python via [uv](https://docs.astral.sh/uv/), the speech model, optionally Ollama) and builds `~/Applications/Bolo.app`. The only question that matters is your **Groq API key**: get one free at [console.groq.com/keys](https://console.groq.com/keys), or press Enter to stay fully offline.
+**3. Answer the questions.** There are at most four, and pressing Return accepts the suggested answer:
 
-Run the same command again to update. To answer the setup questions again:
+| Question | What to choose |
+| --- | --- |
+| Install Ollama for text cleanup? | **Yes.** It's what makes the text tidy. |
+| Which cleanup model? | **1** is the best. Pick **2** if you use Bolo for commercial work (license note below). |
+| Groq API key | Optional. Paste a free key from [console.groq.com/keys](https://console.groq.com/keys) for faster, more accurate results, or just press Return to stay 100% offline. |
+| Start Bolo when you log in? | **Yes**, unless you'd rather open it yourself. |
+
+The installer downloads everything Bolo needs, so you don't need Python or anything else installed first. It builds **Bolo.app** in your `Applications` folder and opens it. A 🎙 icon appears in the menu bar.
+
+**4. Give Bolo three permissions.** macOS will ask. Allow Bolo in **System Settings › Privacy & Security** under:
+
+| Permission | Why Bolo needs it |
+| --- | --- |
+| Microphone | To hear you |
+| Accessibility | To type the text into other apps |
+| Input Monitoring | To notice when you hold the talk key |
+
+**5. Restart Bolo.** Click 🎙 in the menu bar › **Quit**, then open Bolo again from your Applications folder. macOS only applies new permissions after a restart.
+
+You're done. Click into any text box, hold `fn` and speak.
+
+## How to use it
+
+| Do this | What happens |
+| --- | --- |
+| **Hold `fn`**, speak, let go | Your words are typed where the cursor is |
+| **Double-tap `fn`** | Hands-free: keeps listening until you tap `fn` again |
+| **Esc** | Cancels the recording |
+| Start with **"as a prompt"** | Turns what you say into a structured AI prompt |
+| **⌃⌥F** (Control-Option-F) | Fix the last dictation; Bolo remembers the fix |
+| **⌃⌥V** (Control-Option-V) | Paste a dictation that was saved after a failure |
+
+The menu bar icon tells you what's happening: 🎙 ready · 🔴 listening · ⏳ working · ⚠️ something needs attention (click it to see what).
+
+On a MacBook with a notch, a small black "island" also drops down from the notch while you speak.
+
+### Tips
+
+- **`fn` opens emoji or Apple's dictation instead?** Go to **System Settings › Keyboard** and set **"Press 🌐 key to"** to **Do Nothing**.
+- **Prefer another key?** Use 🎙 › **Settings… › General › Talk key** to choose right ⌘, right ⌥ or right ⌃ instead.
+- **Add names and jargon** under 🎙 › **Settings…** so Bolo spells them right from the start.
+
+## Update
+
+Run the install command again. It updates Bolo and keeps your settings:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/soumyaux/bolo/main/install.sh | bash
+```
+
+To answer the setup questions again (for example, to add a Groq key later):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/soumyaux/bolo/main/install.sh | bash -s -- --reconfigure
 ```
-
-### First run: permissions
-
-macOS asks for three permissions in **System Settings › Privacy & Security**. Allow Bolo in each:
-
-| Permission | Why |
-| --- | --- |
-| Microphone | To hear you |
-| Accessibility | To paste the text |
-| Input Monitoring | To see the talk key |
-
-Then quit Bolo from the menu bar (🎙) and open it again.
-
-## Usage
-
-| Do this | To |
-| --- | --- |
-| Hold `fn`, speak, let go | Dictate |
-| Double-tap `fn` | Dictate hands-free; tap again to stop |
-| Esc | Cancel |
-| Start with "as a prompt" | Get a structured prompt |
-| ⌃⌥F | Fix the last dictation (Bolo learns from it) |
-| ⌃⌥V | Paste a saved dictation |
-
-The menu bar icon shows the state: 🎙 ready, 🔴 recording, ⏳ working, ⚠️ needs attention (the menu says what).
-
-### Change the talk key
-
-Open **Settings… › General › Talk key** and pick right ⌘, right ⌥ or right ⌃ instead of `fn`. If `fn` opens the emoji picker or dictation, set **System Settings › Keyboard › Press 🌐 key to** "Do Nothing".
-
-## Privacy
-
-- **With a Groq key**, your audio is sent to [Groq](https://groq.com/privacy-policy/) to be transcribed. **Without one**, audio never leaves your Mac.
-- Cleanup runs in Ollama on your Mac.
-- **No telemetry, no accounts, no analytics.**
-- Stored on your Mac only, readable by your user only, in `~/Library/Application Support/Bolo/`: your settings and key, the text of your last 200 dictations and learned words (to fix and learn), failed dictations' audio (24 h at most), and voice-training clips if you turn that on (14 days at most). Details in [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
-
-## Configuration
-
-Most things are in **Settings…** in the menu. Everything is in `~/Library/Application Support/Bolo/config.toml`, which holds your changes over the commented defaults in [config.default.toml](config.default.toml). Restart Bolo after editing the file by hand.
-
-## Models and licenses
-
-| Model | Used for | License |
-| --- | --- | --- |
-| Whisper large-v3 / large-v3-turbo | Speech to text | MIT |
-| qwen2.5:3b (default cleanup) | Text cleanup | Qwen Research License (non-commercial) |
-| llama3.2:3b (alternative) | Text cleanup | Llama 3.2 Community License |
-
-Pick the cleanup model in the installer, or set `[cleanup] model` to any Ollama model and run `ollama pull <model>`.
-
-## Troubleshooting
-
-- **Nothing happens when I hold fn.** Check Input Monitoring and Accessibility in System Settings, then quit and reopen Bolo. After an update that rebuilds Bolo.app, macOS may ask again: remove Bolo from each list and add it back.
-- **"Cleanup model missing".** Run `ollama pull <model>` as the menu says.
-- **Groq stopped working.** Groq's free-tier limits can change; Bolo falls back to the local model on its own.
-- **Logs** are in `~/Library/Logs/Bolo.log` (never your dictated text). Attach an excerpt to bug reports.
 
 ## Uninstall
 
@@ -99,12 +116,51 @@ Pick the cleanup model in the installer, or set `[cleanup] model` to any Ollama 
 curl -fsSL https://raw.githubusercontent.com/soumyaux/bolo/main/uninstall.sh | bash
 ```
 
-It asks before deleting your saved data, and leaves Ollama alone.
+It asks before deleting your settings and saved words. Ollama is left installed, since other apps may use it.
+
+## Privacy
+
+- **Without a Groq key**, your voice never leaves your Mac.
+- **With a Groq key**, the audio is sent to [Groq](https://groq.com/privacy-policy/) to be turned into text. Nothing else is sent.
+- Text cleanup always runs on your Mac.
+- No accounts, no tracking, no analytics.
+- What Bolo keeps stays on your Mac in `~/Library/Application Support/Bolo/`, readable only by your user account: your settings, the text of your last 200 dictations (so you can fix them and Bolo can learn), and the audio of failed dictations for up to 24 hours. The full list is in [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
+
+## Troubleshooting
+
+**Nothing happens when I hold `fn`.**
+Check that Bolo is allowed under both **Accessibility** and **Input Monitoring** in System Settings › Privacy & Security, then quit and reopen Bolo. If it's already allowed, remove Bolo from both lists with the **–** button and add it again. macOS sometimes forgets an app after it's updated.
+
+**The text shows up in Bolo but isn't typed into the app.**
+Click inside a text box first. If nothing that accepts text has focus, Bolo puts the text on the clipboard so you can paste it with ⌘V.
+
+**The ⚠️ icon says "Cleanup model missing".**
+Open Terminal and run the `ollama pull …` command the menu shows.
+
+**Groq stopped working.**
+Groq's free limits sometimes change. Bolo switches to the offline model on its own, so you can keep dictating.
+
+**Something else is wrong.**
+The log is in `~/Library/Logs/Bolo.log`. It never contains what you said. [Open an issue](https://github.com/soumyaux/bolo/issues/new/choose) and paste the lines from around the problem.
+
+## Settings
+
+Most options are in 🎙 › **Settings…**. Everything is in `~/Library/Application Support/Bolo/config.toml`. Every option and its default is listed in [config.default.toml](config.default.toml). Restart Bolo after you edit the file by hand.
+
+## Models and licenses
+
+| Model | Used for | License |
+| --- | --- | --- |
+| Whisper large-v3 (Groq) and large-v3-turbo (on your Mac) | Speech to text | MIT |
+| qwen2.5:3b (option 1) | Text cleanup | Qwen Research License (**non-commercial use only**) |
+| llama3.2:3b (option 2) | Text cleanup | Llama 3.2 Community License |
+
+To use any other [Ollama](https://ollama.com) model, set `[cleanup] model` in your config and run `ollama pull <model>`.
 
 ## Contributing
 
-Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
+Bug reports and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) explains how to run Bolo from source, and [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) walks through the code.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). Free to use, change and share.
