@@ -142,6 +142,7 @@ def _c(r: float, g: float, b: float, a: float = 1.0):
 _WHITE = _c(1, 1, 1)
 _RED = _c(1, 0.24, 0.33)
 _ACCENT = _c(0.12, 0.42, 1)
+_GREEN = _c(0.2, 0.84, 0.42)
 _AMBER = _c(1, 0.72, 0.2)
 _BLUE = _c(0.32, 0.62, 1)
 _SKY = _c(0.55, 0.75, 1)
@@ -678,7 +679,7 @@ class Overlay:
         parts["words"].setTruncationMode_(kCATruncationNone)
         _shimmer(parts["words"], 0.62)
 
-        # Done: a blue disc, a check mark that draws itself, and a ring that pulses out.
+        # Done: a green disc, a check mark that draws itself, and a ring that pulses out.
         check = CALayer.layer()
         check.setBounds_(((0, 0), (22, 22)))
         self._ring = CAShapeLayer.layer()
@@ -687,10 +688,10 @@ class Overlay:
         CGPathAddEllipseInRect(circle, None, ((0, 0), (22, 22)))
         self._ring.setPath_(circle)
         self._ring.setFillColor_(None)
-        self._ring.setStrokeColor_(_ACCENT)
+        self._ring.setStrokeColor_(_GREEN)
         self._ring.setLineWidth_(1.5)
         self._ring.setOpacity_(0)
-        self._disc = _circle(22, _ACCENT)
+        self._disc = _circle(22, _GREEN)
         self._disc.setPosition_((11, 11))
         self._tick_mark = CAShapeLayer.layer()
         self._tick_mark.setFrame_(((0, 0), (22, 22)))
