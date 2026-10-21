@@ -18,6 +18,7 @@ import objc
 import Quartz
 import rumps
 from AppKit import (
+    NSURL,
     NSApplication,
     NSApplicationActivationPolicyRegular,
     NSBundle,
@@ -28,7 +29,7 @@ from AppKit import (
 from ApplicationServices import AXIsProcessTrusted, AXIsProcessTrustedWithOptions, kAXTrustedCheckOptionPrompt
 from PyObjCTools import AppHelper
 
-from . import audio, config, inject, login, sounds, styles
+from . import audio, config, inject, login, sounds, styles, updates
 from .cleanup import Cleaner, prompt_prefix
 from .early import EarlyText, PrefixCheck
 from .learn import Learning, ax
@@ -76,6 +77,8 @@ _QUIET_DBFS = -50
 _SPEAKER_SECONDS, _ECHO_SECONDS = 0.1, 0.06
 # No step of a key press takes this long (opening a stuck microphone gives up after 8 s).
 _STUCK_SECONDS = 15
+# How often Bolo looks for a new release.
+_UPDATE_EVERY = 6 * 60 * 60
 # Key codes of the letters and the modifier names a shortcut in config.toml may use.
 _LETTERS = {
     "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9, "b": 11, "q": 12,
@@ -224,6 +227,9 @@ class BoloApp(rumps.App):
         self.saved = rumps.MenuItem("Saved dictations")
         self.at_login = rumps.MenuItem("Start at login", callback=self._toggle_login)
         self.at_login.state = login.starts_at_login()
+        self.update_item = rumps.MenuItem("Check for Updates…", callback=self._update_clicked)
+        # The newer release found on GitHub, or None.
+        self._update: str | None = None
         self.menu = [
             self.status,
             self.used_today,
@@ -234,6 +240,9 @@ class BoloApp(rumps.App):
             self.saved,
             self.learned,
             self.at_login,
+            None,
+            rumps.MenuItem(f"Bolo {updates.current()}"),
+            self.update_item,
         ]
         self.recorder = audio.Recorder(cfg["audio"]["sample_rate"], cfg["audio"]["max_seconds"])
         self.chain = Chain(build_providers(cfg))
@@ -301,6 +310,54 @@ class BoloApp(rumps.App):
         threading.Thread(target=self._retry_saved, daemon=True).start()
         self._watchdog_timer = rumps.Timer(self._watchdog, 0.25)
         self._watchdog_timer.start()
+        # Looks for a new release now and then every 6 hours, in the background.
+        self._update_timer = rumps.Timer(
+            lambda _: threading.Thread(target=self._check_update, daemon=True).start(), _UPDATE_EVERY
+        )
+        self._update_timer.start()
+
+    def _check_update(self, told: bool = False) -> None:
+        """Worker thread. told=True when the user asked, so the answer is shown either way."""
+        installed = updates.current()
+        try:
+            latest = updates.latest()
+        except Exception as e:
+            log.info("update check failed: %s", e)
+            if told:
+                self._pill("message", "Couldn't check for updates", 2.5, "warn")
+            return
+        if updates.is_newer(latest, installed):
+            log.info("Bolo %s is out (this is %s)", latest, installed)
+            self._update = latest
+
+            def show():
+                self.update_item.title = f"Update to Bolo {latest}…"
+
+            AppHelper.callAfter(show)
+            if told:
+                self._update_clicked(None)
+        elif told:
+            self._pill("message", f"Bolo {installed} is the latest")
+
+    def _update_clicked(self, _item) -> None:
+        """Main thread."""
+        if self._update is None:
+            threading.Thread(target=self._check_update, args=(True,), daemon=True).start()
+            return
+        if not updates.can_install():
+            # Run from a git checkout: the developer updates with git.
+            NSWorkspace.sharedWorkspace().openURL_(NSURL.URLWithString_(updates.RELEASES))
+            return
+        answer = rumps.alert(
+            title=f"Update to Bolo {self._update}?",
+            message="Bolo will download the update, then quit and open again. It takes about a minute.",
+            ok="Update",
+            cancel="Later",
+        )
+        if answer == 1:
+            self.update_item.title = "Updating…"
+            self._show(BUSY, "Updating Bolo…")
+            updates.install()
 
     def _check_setup(self) -> str:
         """Asks macOS for the permissions and starts the key listener. Returns a problem or ''."""

@@ -44,11 +44,19 @@ FIRST=1
 mkdir -p "$SUPPORT"
 if [ -d "$DIR/.git" ]; then
   say "Updating Bolo"
-  git -C "$DIR" pull --ff-only
+  # Copies installed before releases were shallow; releases need the full history.
+  [ -f "$DIR/.git/shallow" ] && git -C "$DIR" fetch --quiet --unshallow
+  git -C "$DIR" fetch --quiet --tags --force origin
 else
   say "Downloading Bolo"
-  git clone --depth 1 "$REPO" "$DIR"
+  git clone --quiet "$REPO" "$DIR"
 fi
+# The newest release, or the latest code when there is no release yet.
+# BOLO_REF=main installs the latest code anyway; BOLO_REF=v0.1.0 installs that release.
+ref="${BOLO_REF:-$(git -C "$DIR" tag -l 'v*' --sort=-v:refname | head -n1)}"
+case "$ref" in ""|main) ref=origin/main ;; esac
+git -C "$DIR" -c advice.detachedHead=false checkout --quiet --force "$ref"
+say "Installing Bolo $(git -C "$DIR" describe --tags --always)"
 cd "$DIR"
 uv sync --no-dev --frozen 2>/dev/null || uv sync --no-dev
 setup() { uv run --quiet python -m bolo.setup "$@"; }

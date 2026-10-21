@@ -98,17 +98,17 @@ On a MacBook with a notch, a small black "island" also drops down from the notch
 
 ## Update
 
-Run the install command again. It updates Bolo and keeps your settings:
+Bolo checks for new versions on its own. When one is out, the 🎙 menu shows **Update to Bolo x.y.z…**. Click it, and Bolo downloads the update, quits and opens again in about a minute. Your settings and learned words are kept.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/soumyaux/bolo/main/install.sh | bash
-```
+You can also click **Check for Updates…** any time, or run the install command again.
 
 To answer the setup questions again (for example, to add a Groq key later):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/soumyaux/bolo/main/install.sh | bash -s -- --reconfigure
 ```
+
+See what changed in each version on the [Releases](https://github.com/soumyaux/bolo/releases) page.
 
 ## Uninstall
 
@@ -124,6 +124,7 @@ It asks before deleting your settings and saved words. Ollama is left installed,
 - **With a Groq key**, the audio is sent to [Groq](https://groq.com/privacy-policy/) to be turned into text. Nothing else is sent.
 - Text cleanup always runs on your Mac.
 - No accounts, no tracking, no analytics.
+- Every few hours Bolo asks GitHub for the list of Bolo versions, to offer updates. That request carries nothing about you or what you said.
 - What Bolo keeps stays on your Mac in `~/Library/Application Support/Bolo/`, readable only by your user account: your settings, the text of your last 200 dictations (so you can fix them and Bolo can learn), and the audio of failed dictations for up to 24 hours. The full list is in [docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md).
 
 ## Troubleshooting

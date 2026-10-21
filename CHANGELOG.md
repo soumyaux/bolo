@@ -10,4 +10,5 @@ First public release.
 - Learning from corrections, a personal dictionary, and optional training on your voice.
 - Saved dictations that are retried when transcription fails.
 - A Dynamic Island under the notch showing Bolo's state.
+- Update checks: the menu offers new releases and installs them with one click.
 - One-command installer and uninstaller; per-user settings in `~/Library/Application Support/Bolo`.

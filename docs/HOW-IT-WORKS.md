@@ -32,6 +32,7 @@ After a paste, Bolo can watch the text field for up to 90 s and learn from how y
 | `bolo/config.py` | Default + user settings, API keys |
 | `bolo/login.py`, `bolo/launcher.c` | Builds `~/Applications/Bolo.app` and the start-at-login item |
 | `bolo/setup.py` | Steps used by `install.sh` |
+| `bolo/updates.py` | Finds new releases and runs the installer to update |
 | `scripts/` | Developer tools: accuracy test, provider bake-off, voice training, limits check |
 
 ## What is stored, and where
@@ -54,3 +55,4 @@ The log is `~/Library/Logs/Bolo.log`. It never contains what you said.
 - With a Groq key, audio is sent to Groq to be transcribed. Without one, nothing leaves the Mac.
 - Cleanup runs in Ollama on the Mac.
 - No telemetry, no accounts, no analytics.
+- Every 6 hours Bolo runs `git ls-remote` against GitHub to see if a newer release tag exists (`bolo/updates.py`). Nothing else is sent.

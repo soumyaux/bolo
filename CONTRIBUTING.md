@@ -33,6 +33,16 @@ Add a test when you change logic that does not need a microphone or macOS APIs (
 
 Small commits with a [Conventional Commits](https://www.conventionalcommits.org/) prefix and a plain sentence: `fix: say Copied, not Pasted, when no text box has the focus`. Write what changes for the user, not how.
 
+## Releasing a new version
+
+Users get Bolo from the newest release tag, not from `main`, so pushing to `main` never reaches them by itself.
+
+1. Bump `version` in `pyproject.toml` and add a section to `CHANGELOG.md`.
+2. Commit, then tag and push: `git tag -a v0.2.0 -m "Bolo 0.2.0" && git push origin main v0.2.0`.
+3. On GitHub, open **Releases › Draft a new release**, pick the tag, and paste the CHANGELOG section.
+
+Within a few hours every running Bolo shows **Update to Bolo 0.2.0…** in its menu. To try `main` before a release, run the installer with `BOLO_REF=main`.
+
 ## Privacy rules
 
 Bolo must never log or send what the user said, except the audio to the speech provider they chose. Keep it that way in every change.
