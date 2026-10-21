@@ -137,7 +137,7 @@ When macOS asks, allow Bolo in System Settings › Privacy & Security:
   • Microphone        to hear you
   • Accessibility     to paste the text
   • Input Monitoring  to see the talk key
-Then quit Bolo from the menu bar (🎙) and open it again from ~/Applications.
+Then quit Bolo from the menu bar (the b icon) and open it again from ~/Applications.
 
 Hold fn and speak; let go to paste. Double-tap fn for hands-free.
 EOF

@@ -43,7 +43,7 @@ curl -fsSL https://raw.githubusercontent.com/soumyaux/bolo/main/install.sh | bas
 | Groq API key | Optional. Paste a free key from [console.groq.com/keys](https://console.groq.com/keys) for faster, more accurate results, or just press Return to stay 100% offline. |
 | Start Bolo when you log in? | **Yes**, unless you'd rather open it yourself. |
 
-The installer downloads everything Bolo needs, so you don't need Python or anything else installed first. It builds **Bolo.app** in your `Applications` folder and opens it. A 🎙 icon appears in the menu bar.
+The installer downloads everything Bolo needs, so you don't need Python or anything else installed first. It builds **Bolo.app** in your `Applications` folder and opens it. A **b** icon appears in the menu bar.
 
 **4. Give Bolo three permissions.** macOS will ask. Allow Bolo in **System Settings › Privacy & Security** under:
 
@@ -53,7 +53,7 @@ The installer downloads everything Bolo needs, so you don't need Python or anyth
 | Accessibility | To type the text into other apps |
 | Input Monitoring | To notice when you hold the talk key |
 
-**5. Restart Bolo.** Click 🎙 in the menu bar › **Quit**, then open Bolo again from your Applications folder. macOS only applies new permissions after a restart.
+**5. Restart Bolo.** Click the **b** in the menu bar › **Quit**, then open Bolo again from your Applications folder. macOS only applies new permissions after a restart.
 
 You're done. Click into any text box, hold `fn` and speak.
 
@@ -68,19 +68,19 @@ You're done. Click into any text box, hold `fn` and speak.
 | **⌃⌥F** (Control-Option-F) | Fix the last dictation; Bolo remembers the fix |
 | **⌃⌥V** (Control-Option-V) | Paste a dictation that was saved after a failure |
 
-The menu bar icon tells you what's happening: 🎙 ready · 🔴 listening · ⏳ working · ⚠️ something needs attention (click it to see what).
+The menu bar icon tells you what's happening: **b** alone: ready · 🔵 listening · ⏳ working · ⚠️ something needs attention (click it to see what).
 
 On a MacBook with a notch, a small black "island" also drops down from the notch while you speak.
 
 ### Tips
 
 - **`fn` opens emoji or Apple's dictation instead?** Go to **System Settings › Keyboard** and set **"Press 🌐 key to"** to **Do Nothing**.
-- **Prefer another key?** Use 🎙 › **Settings… › General › Talk key** to choose right ⌘, right ⌥ or right ⌃ instead.
-- **Add names and jargon** under 🎙 › **Settings…** so Bolo spells them right from the start.
+- **Prefer another key?** Use **b** › **Settings… › General › Talk key** to choose right ⌘, right ⌥ or right ⌃ instead.
+- **Add names and jargon** under **b** › **Settings…** so Bolo spells them right from the start.
 
 ## Update
 
-Bolo checks for new versions on its own. When one is out, the 🎙 menu shows **Update to Bolo x.y.z…**. Click it, and Bolo downloads the update, quits and opens again in about a minute. Your settings and learned words are kept.
+Bolo checks for new versions on its own. When one is out, the **b** menu shows **Update to Bolo x.y.z…**. Click it, and Bolo downloads the update, quits and opens again in about a minute. Your settings and learned words are kept.
 
 You can also click **Check for Updates…** any time, or run the install command again.
 
@@ -128,7 +128,7 @@ The log is in `~/Library/Logs/Bolo.log`. It never contains what you said. [Open 
 
 ## Settings
 
-Most options are in 🎙 › **Settings…**. Everything is in `~/Library/Application Support/Bolo/config.toml`. Every option and its default is listed in [config.default.toml](../config.default.toml). Restart Bolo after you edit the file by hand.
+Most options are in **b** › **Settings…**. Everything is in `~/Library/Application Support/Bolo/config.toml`. Every option and its default is listed in [config.default.toml](../config.default.toml). Restart Bolo after you edit the file by hand.
 
 ## Models and licenses
 

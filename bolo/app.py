@@ -47,8 +47,9 @@ from .usage import Usage
 
 log = logging.getLogger("bolo")
 ICON = Path(__file__).resolve().parent.parent / "assets" / "Bolo.icns"
+MENUBAR_ICON = Path(__file__).resolve().parent.parent / "assets" / "menubar.png"
 
-IDLE, RECORDING, BUSY, WARN = "🎙", "🔴", "⏳", "⚠️"
+IDLE, RECORDING, BUSY, WARN = "", "🔵", "⏳", "⚠️"
 
 # Modifier keys that can be held to talk: name -> (keycode, flag bit set while it is down).
 _KEYS = {
@@ -217,7 +218,8 @@ def build_providers(cfg: dict) -> list:
 
 class BoloApp(rumps.App):
     def __init__(self, cfg: dict):
-        super().__init__("Bolo", title=IDLE, quit_button="Quit")
+        super().__init__("Bolo", icon=str(MENUBAR_ICON), template=True, quit_button="Quit")
+        self.state = IDLE
         self.cfg = cfg
         self.status = rumps.MenuItem("Starting...")
         self.usage = Usage()
@@ -502,7 +504,7 @@ class BoloApp(rumps.App):
             frame = sys._current_frames().get(self._worker_id)
             where = "".join(traceback.format_stack(frame)) if frame else "unknown"
             log.warning("stuck for %.0f s on %r at:\n%s", now - busy[1], busy[0], where)
-            self.title = WARN
+            self._set_state(WARN)
             self.status.title = "Bolo is stuck: restart it (details in ~/Library/Logs/Bolo.log)"
 
     def _hands_free_limit(self, session: int) -> None:
@@ -525,7 +527,7 @@ class BoloApp(rumps.App):
 
     def _show(self, title: str, status: str | None = None) -> None:
         def apply():
-            self.title = title
+            self._set_state(title)
             if status is not None:
                 self.status.title = status
                 # What the island shows when the user hovers on the notch.
@@ -533,6 +535,11 @@ class BoloApp(rumps.App):
                     self.overlay.ready(status, title == IDLE)
 
         AppHelper.callAfter(apply)
+
+    def _set_state(self, state: str) -> None:
+        """The b alone when ready; the b and an emoji while listening, working or stuck."""
+        self.state = state
+        self.title = state or None
 
     def _toggle_login(self, item) -> None:
         login.set_start_at_login(not item.state)
@@ -648,7 +655,7 @@ class BoloApp(rumps.App):
             return ""
         AppHelper.callAfter(self._refresh_learned)
         summary = "Learned: " + ", ".join(f"{s.heard} → {s.intended}" for s in swaps)
-        self._show(self.title, summary[:80])
+        self._show(self.state, summary[:80])
         self._pill("message", summary[:60])
         return summary[:80]
 
@@ -664,11 +671,11 @@ class BoloApp(rumps.App):
         """Shows that the cleanup is skipped because Ollama has no GPU, and when it is back."""
         if self._problem:
             return
-        busy = self.title not in (IDLE, WARN)
+        busy = self.state not in (IDLE, WARN)
         if warning:
-            self._show(self.title if busy else WARN, warning)
+            self._show(self.state if busy else WARN, warning)
         else:
-            self._show(self.title if busy else IDLE, "Cleanup back on the GPU")
+            self._show(self.state if busy else IDLE, "Cleanup back on the GPU")
 
     def _prompt_likely(self) -> bool:
         """True when this dictation will be a prompt unless said otherwise: the prompt key is held,

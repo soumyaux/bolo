@@ -27,7 +27,7 @@ curl -fsSL https://raw.githubusercontent.com/soumyaux/bolo/main/install.sh | bas
 
 Press Return to accept each suggested answer. A Groq key is optional: skip it to stay offline.
 
-Then allow Bolo in **System Settings › Privacy & Security**, quit it from the 🎙 menu, and open it again.
+Then allow Bolo in **System Settings › Privacy & Security**, quit it from the **b** menu, and open it again.
 
 **You need:** a Mac with Apple Silicon (M1 or newer), macOS 13 or newer, and 4 GB of free space.
 
@@ -40,7 +40,7 @@ Then allow Bolo in **System Settings › Privacy & Security**, quit it from the 
 ## Good to know
 
 - 🔒 **Private.** Without a Groq key, your voice never leaves your Mac.
-- 🔄 **Updates.** The 🎙 menu tells you when a new version is out. One click installs it.
+- 🔄 **Updates.** The **b** menu tells you when a new version is out. One click installs it.
 - 🗑 **Uninstall:** `curl -fsSL https://raw.githubusercontent.com/soumyaux/bolo/main/uninstall.sh | bash`
 
 **Something not working?** See the [full guide](docs/GUIDE.md#troubleshooting) or [open an issue](https://github.com/soumyaux/bolo/issues/new/choose).

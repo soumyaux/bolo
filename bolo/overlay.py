@@ -141,9 +141,10 @@ def _c(r: float, g: float, b: float, a: float = 1.0):
 
 _WHITE = _c(1, 1, 1)
 _RED = _c(1, 0.24, 0.33)
-_GREEN = _c(0.2, 0.84, 0.42)
+_ACCENT = _c(0.12, 0.42, 1)
 _AMBER = _c(1, 0.72, 0.2)
 _BLUE = _c(0.32, 0.62, 1)
+_SKY = _c(0.55, 0.75, 1)
 
 
 def _font(size: float, weight: float = NSFontWeightRegular):
@@ -360,7 +361,7 @@ _MESSAGE_LOOK = {
     "warn": ("exclamationmark.triangle.fill", [_AMBER]),
     "error": ("xmark.octagon.fill", [_RED]),
     "cancel": ("xmark.circle.fill", [_c(1, 1, 1, 0.5)]),
-    "copy": ("doc.on.clipboard.fill", [_c(0.35, 0.88, 1), _BLUE]),
+    "copy": ("doc.on.clipboard.fill", [_SKY, _BLUE]),
 }
 
 
@@ -571,7 +572,7 @@ class Overlay:
         # Ready: a breathing dot.
         dot = CALayer.layer()
         dot.setBounds_(((0, 0), (12, 12)))
-        self._dot = _circle(8, _GREEN)
+        self._dot = _circle(8, _ACCENT)
         self._dot.setPosition_((6, 6))
         self._dot.setShadowOpacity_(0.9)
         self._dot.setShadowRadius_(4)
@@ -593,14 +594,14 @@ class Overlay:
         orb.setBounds_(((0, 0), (30, 30)))
         self._glow = CAGradientLayer.layer()
         self._glow.setType_(kCAGradientLayerRadial)
-        self._glow.setColors_([_c(1, 0.3, 0.4, 0.95), _c(1, 0.24, 0.33, 0.35), _c(1, 0.24, 0.33, 0)])
+        self._glow.setColors_([_c(0.32, 0.62, 1, 0.95), _c(0.12, 0.42, 1, 0.35), _c(0.12, 0.42, 1, 0)])
         self._glow.setLocations_([0.0, 0.45, 1.0])
         self._glow.setStartPoint_((0.5, 0.5))
         self._glow.setEndPoint_((1, 1))
         self._glow.setFrame_(((0, 0), (30, 30)))
-        self._core = _circle(11, _RED)
+        self._core = _circle(11, _ACCENT)
         self._core.setPosition_((15, 15))
-        self._core.setBorderColor_(_c(1, 0.62, 0.66, 0.9))
+        self._core.setBorderColor_(_c(0.7, 0.82, 1, 0.9))
         self._core.setBorderWidth_(1)
         orb.addSublayer_(self._glow)
         orb.addSublayer_(self._core)
@@ -610,7 +611,7 @@ class Overlay:
         meter.setBounds_(((0, 0), (_METER_W, _METER_H)))
         meter.setStartPoint_((0, 0.5))
         meter.setEndPoint_((1, 0.5))
-        meter.setColors_([_c(1, 0.36, 0.55), _c(1, 0.5, 0.38), _c(1, 0.66, 0.25)])
+        meter.setColors_([_c(0.12, 0.42, 1), _c(0.32, 0.62, 1), _c(0.7, 0.85, 1)])
         bars = CALayer.layer()
         bars.setFrame_(((0, 0), (_METER_W, _METER_H)))
         self._bars = []
@@ -641,8 +642,8 @@ class Overlay:
         parts["caption"].setTruncationMode_(kCATruncationNone)
 
         # Transcribing and polishing: an icon, three dots in a wave, a shimmering title.
-        parts["wave"] = _symbol("waveform", 15, NSFontWeightSemibold, [_c(0.35, 0.88, 1), _c(0.45, 0.48, 1)])
-        parts["spark"] = _symbol("sparkles", 15, NSFontWeightSemibold, [_c(0.72, 0.5, 1), _c(1, 0.45, 0.75)])
+        parts["wave"] = _symbol("waveform", 15, NSFontWeightSemibold, [_SKY, _BLUE])
+        parts["spark"] = _symbol("sparkles", 15, NSFontWeightSemibold, [_WHITE, _BLUE])
         dots = CALayer.layer()
         dots.setBounds_(((0, 0), (26, 12)))
         for i in range(3):
@@ -677,7 +678,7 @@ class Overlay:
         parts["words"].setTruncationMode_(kCATruncationNone)
         _shimmer(parts["words"], 0.62)
 
-        # Done: a green disc, a check mark that draws itself, and a ring that pulses out.
+        # Done: a blue disc, a check mark that draws itself, and a ring that pulses out.
         check = CALayer.layer()
         check.setBounds_(((0, 0), (22, 22)))
         self._ring = CAShapeLayer.layer()
@@ -686,10 +687,10 @@ class Overlay:
         CGPathAddEllipseInRect(circle, None, ((0, 0), (22, 22)))
         self._ring.setPath_(circle)
         self._ring.setFillColor_(None)
-        self._ring.setStrokeColor_(_GREEN)
+        self._ring.setStrokeColor_(_ACCENT)
         self._ring.setLineWidth_(1.5)
         self._ring.setOpacity_(0)
-        self._disc = _circle(22, _GREEN)
+        self._disc = _circle(22, _ACCENT)
         self._disc.setPosition_((11, 11))
         self._tick_mark = CAShapeLayer.layer()
         self._tick_mark.setFrame_(((0, 0), (22, 22)))
@@ -853,8 +854,8 @@ class Overlay:
         min_width = 0.0
         if state == "peek":
             status, ok = self._status
-            self._dot.setBackgroundColor_(_GREEN if ok else _AMBER)
-            self._dot.setShadowColor_(_GREEN if ok else _AMBER)
+            self._dot.setBackgroundColor_(_ACCENT if ok else _AMBER)
+            self._dot.setShadowColor_(_ACCENT if ok else _AMBER)
             left = ("dot", 12, 12)
             if _measure(status, _SMALL)[0] <= 170:
                 right = ("status", *self._single("status", status, _SMALL))
