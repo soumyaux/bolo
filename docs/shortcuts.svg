@@ -1,37 +1,37 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 300" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
-  <rect width="900" height="300" rx="24" fill="#16171B"/>
+  <rect x="1" y="1" width="898" height="298" rx="24" fill="#FFFFFF" stroke="#DCE4F5" stroke-width="2"/>
   <g font-size="18">
     <!-- left column -->
     <g transform="translate(50 40)">
-      <rect width="96" height="40" rx="10" fill="#2A2C33" stroke="#FF9F0A" stroke-width="2"/>
-      <text x="48" y="27" text-anchor="middle" font-weight="600" fill="#ECECEA">hold fn</text>
-      <text x="116" y="27" fill="#ECECEA">Dictate</text>
+      <rect width="96" height="40" rx="10" fill="#EEF3FF" stroke="#1F6BFF" stroke-width="2"/>
+      <text x="48" y="27" text-anchor="middle" font-weight="600" fill="#0F1B33">hold fn</text>
+      <text x="116" y="27" fill="#0F1B33">Dictate</text>
     </g>
     <g transform="translate(50 120)">
-      <rect width="96" height="40" rx="10" fill="#2A2C33"/>
-      <text x="48" y="27" text-anchor="middle" font-weight="600" fill="#ECECEA">fn fn</text>
-      <text x="116" y="27" fill="#ECECEA">Hands-free (tap again to stop)</text>
+      <rect width="96" height="40" rx="10" fill="#EEF3FF"/>
+      <text x="48" y="27" text-anchor="middle" font-weight="600" fill="#0F1B33">fn fn</text>
+      <text x="116" y="27" fill="#0F1B33">Hands-free (tap again to stop)</text>
     </g>
     <g transform="translate(50 200)">
-      <rect width="96" height="40" rx="10" fill="#2A2C33"/>
-      <text x="48" y="27" text-anchor="middle" font-weight="600" fill="#ECECEA">esc</text>
-      <text x="116" y="27" fill="#ECECEA">Cancel</text>
+      <rect width="96" height="40" rx="10" fill="#EEF3FF"/>
+      <text x="48" y="27" text-anchor="middle" font-weight="600" fill="#0F1B33">esc</text>
+      <text x="116" y="27" fill="#0F1B33">Cancel</text>
     </g>
     <!-- right column -->
     <g transform="translate(455 40)">
-      <rect width="96" height="40" rx="10" fill="#2A2C33"/>
-      <text x="48" y="27" text-anchor="middle" font-weight="600" fill="#ECECEA">⌃⌥F</text>
-      <text x="116" y="27" fill="#ECECEA">Fix last dictation</text>
+      <rect width="96" height="40" rx="10" fill="#EEF3FF"/>
+      <text x="48" y="27" text-anchor="middle" font-weight="600" fill="#0F1B33">⌃⌥F</text>
+      <text x="116" y="27" fill="#0F1B33">Fix last dictation</text>
     </g>
     <g transform="translate(455 120)">
-      <rect width="96" height="40" rx="10" fill="#2A2C33"/>
-      <text x="48" y="27" text-anchor="middle" font-weight="600" fill="#ECECEA">⌃⌥V</text>
-      <text x="116" y="27" fill="#ECECEA">Paste a saved dictation</text>
+      <rect width="96" height="40" rx="10" fill="#EEF3FF"/>
+      <text x="48" y="27" text-anchor="middle" font-weight="600" fill="#0F1B33">⌃⌥V</text>
+      <text x="116" y="27" fill="#0F1B33">Paste a saved dictation</text>
     </g>
     <g transform="translate(455 200)">
-      <rect width="96" height="40" rx="10" fill="#2A2C33"/>
-      <text x="48" y="27" text-anchor="middle" font-weight="600" fill="#ECECEA">say</text>
-      <text x="116" y="27" fill="#ECECEA">"as a prompt…" for AI prompts</text>
+      <rect width="96" height="40" rx="10" fill="#EEF3FF"/>
+      <text x="48" y="27" text-anchor="middle" font-weight="600" fill="#0F1B33">say</text>
+      <text x="116" y="27" fill="#0F1B33">"as a prompt…" for AI prompts</text>
     </g>
   </g>
 </svg>
