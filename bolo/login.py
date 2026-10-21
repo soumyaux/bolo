@@ -31,7 +31,7 @@ _BUILT_FROM = "BoloLauncherBuild"
 
 
 def _build_id() -> str:
-    return hashlib.sha256(f"{_SOURCE.read_bytes()!r}{ROOT}{LOG}".encode()).hexdigest()[:16]
+    return hashlib.sha256(f"{_SOURCE.read_bytes()!r}{ROOT}{LOG}{_signing_identity()}".encode()).hexdigest()[:16]
 
 
 def _signing_identity() -> str:

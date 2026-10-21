@@ -2,7 +2,7 @@
 
 **Hold a key, speak, let go: your words are typed wherever the cursor is.** Free, open-source push-to-talk dictation for Apple Silicon Macs that can run 100% offline.
 
-![Bolo dictating into an app](docs/demo.gif)
+<img src="assets/icon.png" alt="Bolo" width="96">
 
 ## Features
 

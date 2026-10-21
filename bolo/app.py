@@ -17,7 +17,14 @@ from pathlib import Path
 import objc
 import Quartz
 import rumps
-from AppKit import NSBundle, NSRunningApplication, NSWorkspace
+from AppKit import (
+    NSApplication,
+    NSApplicationActivationPolicyRegular,
+    NSBundle,
+    NSImage,
+    NSRunningApplication,
+    NSWorkspace,
+)
 from ApplicationServices import AXIsProcessTrusted, AXIsProcessTrustedWithOptions, kAXTrustedCheckOptionPrompt
 from PyObjCTools import AppHelper
 
@@ -38,6 +45,7 @@ from .stt.local_whisper import LocalWhisper, ensure_model
 from .usage import Usage
 
 log = logging.getLogger("bolo")
+ICON = Path(__file__).resolve().parent.parent / "assets" / "Bolo.icns"
 
 IDLE, RECORDING, BUSY, WARN = "🎙", "🔴", "⏳", "⚠️"
 
@@ -259,6 +267,7 @@ class BoloApp(rumps.App):
         self._locked = False
         self._down_at = 0.0
         self._last_tap = 0.0
+        self._lock_pending = False
         self._ignore_up: str | None = None
         self._lock_key = ""
         self._lock_session = 0
@@ -270,7 +279,10 @@ class BoloApp(rumps.App):
         self._writing = False
         self._cancelled = threading.Event()
         self.overlay = Overlay(
-            lambda: self.recorder.level, self._cancel, cfg.get("overlay", {}).get("show_words", True)
+            lambda: self.recorder.level,
+            self._cancel,
+            cfg.get("overlay", {}).get("show_words", True),
+            bands=lambda: self.recorder.bands,
         )
         # The output device Bolo muted, or 0 when it muted none.
         self._muted = 0
@@ -377,10 +389,11 @@ class BoloApp(rumps.App):
                 self._prompt_key_used = name == self._prompt_key()
                 log.debug("talk key %s down", name)
                 self._commands.put("down")
-                if self.cfg["audio"]["hands_free"] and now - self._last_tap < _DOUBLE_TAP_SECONDS:
-                    self._locked = True
-                    self._lock_key = name
-                    self._commands.put("lock")
+                # A second press soon after a tap may be a double tap. It locks only if it is a
+                # tap too; held down, it is ordinary push-to-talk and ends when the key goes up.
+                self._lock_pending = (
+                    self.cfg["audio"]["hands_free"] and now - self._last_tap < _DOUBLE_TAP_SECONDS
+                )
             elif not down and self._held == name:
                 self._released(now)
             elif not down and self._ignore_up == name:
@@ -389,11 +402,17 @@ class BoloApp(rumps.App):
 
     def _released(self, now: float) -> None:
         """The talk key went up. Main thread."""
-        self._held = None
+        name, self._held = self._held, None
         log.debug("talk key up after %.2f s%s", now - self._down_at, " (hands-free)" if self._locked else "")
         if self._locked:
             return
-        if now - self._down_at < _TAP_SECONDS:
+        pending, self._lock_pending = self._lock_pending, False
+        if now - self._down_at < _TAP_SECONDS and pending:
+            # The second tap of a double tap: recording goes on hands-free.
+            self._locked = True
+            self._lock_key = name
+            self._commands.put("lock")
+        elif now - self._down_at < _TAP_SECONDS:
             # Too short to be speech; it may be the first half of a double tap.
             self._last_tap = now
             self._commands.put("tap")
@@ -410,9 +429,11 @@ class BoloApp(rumps.App):
         # A key release can be missed while the listener is off. Without this, the next press
         # would be ignored and the recording would run on with the speakers muted.
         name = self._held
-        if name and not self._locked and now - self._down_at > 0.5:
+        if name and not self._locked and now - self._down_at > 0.3:
             flag = _KEY_FAMILY[name] or _KEYS[name][1]
-            if not Quartz.CGEventSourceFlagsState(Quartz.kCGEventSourceStateHIDSystemState) & flag:
+            # Both views of the keyboard must agree the key is down; fn in particular can be missed.
+            states = (Quartz.kCGEventSourceStateHIDSystemState, Quartz.kCGEventSourceStateCombinedSessionState)
+            if not all(Quartz.CGEventSourceFlagsState(state) & flag for state in states):
                 log.warning("missed the release of %s; finishing the recording", name)
                 self._released(now)
         busy = self._busy
@@ -1098,8 +1119,12 @@ def main() -> None:
     level = logging.DEBUG if os.environ.get("BOLO_DEBUG") else logging.INFO
     logging.basicConfig(level=level, format="%(asctime)s %(name)s %(message)s", datefmt="%H:%M:%S")
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    # Menu bar only: no Dock icon.
-    NSBundle.mainBundle().infoDictionary()["LSUIElement"] = "1"
+    # Show in the Dock too. Python is the running process, so its icon is set here; Bolo.app itself stays untouched.
+    NSBundle.mainBundle().infoDictionary()["CFBundleName"] = "Bolo"
+    NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyRegular)
+    icon = NSImage.alloc().initWithContentsOfFile_(str(ICON))
+    if icon is not None:
+        NSApplication.sharedApplication().setApplicationIconImage_(icon)
     BoloApp(config.load()).run()
 
 

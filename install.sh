@@ -50,7 +50,7 @@ else
   git clone --depth 1 "$REPO" "$DIR"
 fi
 cd "$DIR"
-uv sync --frozen 2>/dev/null || uv sync
+uv sync --no-dev --frozen 2>/dev/null || uv sync --no-dev
 setup() { uv run --quiet python -m bolo.setup "$@"; }
 
 # 5. Ollama, for the cleanup pass (optional).

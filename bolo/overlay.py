@@ -10,7 +10,6 @@ the window server animates. Call every method on the main thread.
 
 import math
 import time
-from collections import deque
 from collections.abc import Callable
 
 import objc
@@ -103,16 +102,15 @@ _FLOAT_TOP, _FLOAT_GAP, _FLOAT_BAR = 6, 36, 32
 _MESSAGE_SECONDS = 1.6
 _DONE_SECONDS = 1.3
 _PEEK_CLOSE_SECONDS = 0.3
-# The meter: 9 bars, tallest in the middle. The newest sound is in the middle bar and moves out
-# to the sides, each step out showing the voice a moment earlier, so it ripples at speaking pace.
+# The meter: 9 bars, mirrored around the middle one. Each pair follows one pitch band of the voice
+# (low in the middle, bright consonants at the edges) scaled by how loud it is, so it jumps up on
+# a loud syllable, drops between words and moves differently as the voice changes.
 _BARS = 9
-_SHAPE = [1.0, 0.86, 0.7, 0.55, 0.42]  # by steps from the middle
-_METER_W, _METER_H = 48, 28
-_STEP_SECONDS = 0.07
+_SHAPE = [1.0, 0.92, 0.8, 0.68, 0.56]  # by steps from the middle
+_METER_W, _METER_H = 48, 20
 _SAMPLES_PER_SECOND = 120
-# How fast the meter follows the voice: it rises in about 50 ms and settles in about 180 ms, like
-# a VU meter, so it moves with syllables but never flickers.
-_RISE, _FALL = 0.05, 0.18
+# How fast the bars follow the voice: up in about 25 ms, down in about 110 ms.
+_RISE, _FALL = 0.025, 0.11
 _TYPE_RATE = 95  # characters a second
 _POLISH_WIDTH, _WORD_LINES = 440, 3
 _ACTIVE = {"listening", "transcribing", "polishing"}
@@ -406,8 +404,15 @@ class Overlay:
     """level() returns the microphone level from 0 to 1; on_cancel runs when × is clicked.
     show_words lets the island show the words while the cleanup model works on them."""
 
-    def __init__(self, level: Callable[[], float], on_cancel: Callable[[], None], show_words: bool = True):
+    def __init__(
+        self,
+        level: Callable[[], float],
+        on_cancel: Callable[[], None],
+        show_words: bool = True,
+        bands: Callable[[], list[float]] | None = None,
+    ):
         self._level = level
+        self._bands = bands
         self._on_cancel = on_cancel
         self.show_words = show_words
         self._panel = None
@@ -983,34 +988,38 @@ class Overlay:
     def _reset_meter(self) -> None:
         self._lvl = 0.0
         self._glow_lvl = 0.0
-        length = int(_STEP_SECONDS * _SAMPLES_PER_SECOND) * (_BARS // 2) + 1
-        self._history = deque([0.0] * length, maxlen=length)
+        self._bar_lvls = [0.0] * (_BARS // 2 + 1)
         self._sampled = time.monotonic()
 
     def _meter(self) -> None:
         now = time.monotonic()
         dt = min(0.1, max(0.0, now - self._sampled))
+        self._sampled = now
         raw = max(0.0, min(1.0, self._level()))
-        # Follows the voice with a time constant, the same at any frame rate.
-        tau = _RISE if raw > self._lvl else _FALL
-        self._lvl += (raw - self._lvl) * (1 - math.exp(-dt / tau))
-        self._glow_lvl += (raw - self._glow_lvl) * (1 - math.exp(-dt / (0.08 if raw > self._glow_lvl else 0.35)))
-        # The history is kept at a fixed rate, so the ripple moves at the same speed on any display.
-        steps = int((now - self._sampled) * _SAMPLES_PER_SECOND)
-        if steps:
-            self._history.extend([self._lvl] * min(steps, self._history.maxlen))
-            self._sampled += steps / _SAMPLES_PER_SECOND
+        bands = list(self._bands()) if self._bands else []
+
+        def follow(current: float, target: float, rise: float, fall: float) -> float:
+            # A time constant, so it moves the same at any frame rate.
+            return current + (target - current) * (1 - math.exp(-dt / (rise if target > current else fall)))
+
+        self._lvl = follow(self._lvl, raw, _RISE, _FALL)
+        self._glow_lvl = follow(self._glow_lvl, raw, 0.08, 0.35)
         glow = self._glow_lvl
         self._glow.setValue_forKeyPath_(0.65 + 0.9 * glow, "transform.scale")
         self._glow.setOpacity_(0.3 + 0.7 * glow)
         self._core.setValue_forKeyPath_(1 + 0.32 * self._lvl, "transform.scale")
-        lag = int(_STEP_SECONDS * _SAMPLES_PER_SECOND)
+        for out in range(len(self._bar_lvls)):
+            band = bands[out] if out < len(bands) else raw
+            # Loudness sets how high the meter goes; the band sets which bars carry it.
+            target = raw * (0.35 + 0.65 * band) * _SHAPE[out]
+            # A little flutter while speaking, so neighbouring bars never move as one block.
+            target *= 1 + 0.18 * math.sin(now * (11 + 3.7 * out) + out * 1.9) * min(1.0, raw * 3)
+            self._bar_lvls[out] = follow(self._bar_lvls[out], min(1.0, target), _RISE, _FALL)
         for i, bar in enumerate(self._bars):
             out = abs(i - _BARS // 2)
-            voice = self._history[-1 - out * lag] * _SHAPE[out]
             # In silence a faint swell drifts outward, so the meter reads as listening, not frozen.
-            rest = 0.05 + 0.035 * (1 + math.sin(now * 2.4 - out * 0.9)) / 2
-            height = 3 + (_METER_H - 3) * max(rest, voice) ** 0.85
+            rest = 0.06 + 0.04 * (1 + math.sin(now * 2.4 - out * 0.9)) / 2
+            height = 3 + (_METER_H - 3) * max(rest, self._bar_lvls[out] ** 1.15)
             bar.setFrame_(((i * 5.6, (_METER_H - height) / 2), (3, height)))
         if self._hint:
             self._set_clock()

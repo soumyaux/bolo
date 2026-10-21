@@ -78,6 +78,12 @@ def default_input_id() -> int:
 _ABOVE_NOISE, _VOICE_RANGE = 6.0, 38.0
 # How fast the noise estimate may rise, in dB a second, so speech is not taken for noise.
 _FLOOR_RISE = 0.5
+# The meter's bars, from the middle out: low voice, the vowels, and the bright consonants. A
+# change of pitch or vowel moves some bars more than others, so the meter reads as this voice.
+_BANDS_HZ = [(90, 300), (300, 700), (700, 1500), (1500, 3000), (3000, 6000)]
+_BAND_RANGE = 30.0  # dB above a band's own noise that fills its bar
+# Blocks of 16 ms at 16 kHz, so the meter gets a new reading every display frame or two.
+_BLOCK = 256
 
 class Recorder:
     """Records 16-bit mono audio between start() and stop()."""
@@ -93,8 +99,11 @@ class Recorder:
         self.take = 0
         # How far the voice is above the room's noise, from 0 to 1, for the on-screen meter.
         self.level = 0.0
+        # The same, split by pitch into the meter's bands (see _BANDS_HZ).
+        self.bands = [0.0] * len(_BANDS_HZ)
         # The room's noise in dBFS: follows the quietest blocks, and creeps up slowly in between.
         self._floor: float | None = None
+        self._band_floors: list[float | None] = [None] * len(_BANDS_HZ)
         # PortAudio reads the list of devices once. It must read it again after the Mac's input
         # changes (AirPods on or off), or it keeps opening a device that is gone and hears nothing.
         self._device = default_input_id()
@@ -117,6 +126,7 @@ class Recorder:
     def _callback(self, indata, frames, time_info, status) -> None:
         self._callbacks += 1
         self.level = self._loudness(indata, frames)
+        self.bands = self._spectrum(indata, frames)
         with self._lock:
             if self._frames < self._max_frames:
                 self._chunks.append(indata.copy())
@@ -136,6 +146,24 @@ class Recorder:
         else:
             self._floor = min(self._floor + _FLOOR_RISE * seconds, -30.0)
         return min(1.0, max(0.0, (db - self._floor - _ABOVE_NOISE) / _VOICE_RANGE))
+
+    def _spectrum(self, indata, frames: int) -> list[float]:
+        """The block's loudness in each band, each above that band's own noise, from 0 to 1."""
+        if frames < 64:
+            return [0.0] * len(_BANDS_HZ)
+        samples = indata[:, 0].astype(np.float32) / 32768
+        power = np.abs(np.fft.rfft(samples * np.hanning(frames))) ** 2
+        freqs = np.fft.rfftfreq(frames, 1 / self.sample_rate)
+        seconds = frames / self.sample_rate
+        out = []
+        for i, (low, high) in enumerate(_BANDS_HZ):
+            picked = power[(freqs >= low) & (freqs < high)]
+            db = 10 * np.log10(float(picked.sum()) + 1e-10) if picked.size else -100.0
+            floor = self._band_floors[i]
+            floor = db if floor is None or db < floor else floor + _FLOOR_RISE * seconds
+            self._band_floors[i] = floor
+            out.append(min(1.0, max(0.0, (db - floor - _ABOVE_NOISE) / _BAND_RANGE)))
+        return out
 
     def start(self) -> None:
         if self._stream is not None:
@@ -170,6 +198,7 @@ class Recorder:
                 samplerate=self.sample_rate,
                 channels=1,
                 dtype="int16",
+                blocksize=_BLOCK,
                 callback=self._callback,
             )
             stream.start()
@@ -219,6 +248,7 @@ class Recorder:
             log.warning("the microphone did not close; leaving it and starting fresh next time")
             self._refresh = True
         self.level = 0.0
+        self.bands = [0.0] * len(_BANDS_HZ)
         with self._lock:
             chunks, self._chunks = self._chunks, []
             self._frames = 0
