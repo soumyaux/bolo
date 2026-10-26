@@ -3,8 +3,8 @@
 It stays hidden until something happens; hovering on the notch peeks it open to say whether Bolo
 is ready. While the key is held it shows an orb that pulses with the voice and a live meter; while
 the speech becomes text, a shimmering label; while the cleanup model works, the words themselves;
-and a check mark that draws itself once the text is pasted. On a screen without a notch it floats
-from the top edge. Everything moves with Core Animation springs, so Python only sets targets and
+and a check mark that draws itself once the text is pasted. On a screen without a notch it grows
+from the top edge in the same notch shape. Everything moves with Core Animation springs, so Python only sets targets and
 the window server animates. Call every method on the main thread.
 """
 
@@ -33,6 +33,7 @@ from AppKit import (
     NSMainMenuWindowLevel,
     NSPanel,
     NSScreen,
+    NSStatusBar,
     NSStringDrawingUsesLineFragmentOrigin,
     NSView,
     NSWindowCollectionBehaviorCanJoinAllSpaces,
@@ -97,8 +98,8 @@ _PAD = 14  # between an ear's content and the island's side
 _BODY_PAD = 18
 _COMPACT_R, _OPEN_R = 12, 24  # bottom corner radius
 _SHOULDER = 7  # the small inward curve where the notch meets the top edge
-# A screen without a notch: the island floats this far from the top, around a small centre gap.
-_FLOAT_TOP, _FLOAT_GAP, _FLOAT_BAR = 6, 36, 32
+# A screen without a notch: the island hangs from the top edge as if it had a notch this wide.
+_FLOAT_GAP = 36
 _MESSAGE_SECONDS = 1.6
 _DONE_SECONDS = 1.3
 _PEEK_CLOSE_SECONDS = 0.3
@@ -196,9 +197,9 @@ def _tail(text: str, font, width: float, lines: int) -> str:
 
 
 def _island_path(cx: float, top: float, w: float, h: float, r: float, s: float):
-    """The island's outline. s > 0 curves the top corners outward into the screen edge, as the
-    notch does; s < 0 rounds them, for a floating island. Every outline has the same elements in
-    the same order, so a spring can morph any one into any other."""
+    """The island's outline. s curves the top corners outward into the screen edge, as the notch
+    does. Every outline has the same elements in the same order, so a spring can morph any one into
+    any other."""
     path = CGPathCreateMutable()
     left, right, bottom = cx - w / 2, cx + w / 2, top - h
     k = 0.448  # cubic handles that draw a quarter circle
@@ -731,7 +732,11 @@ class Overlay:
             centre = frame.origin.x + left.size.width + self._gap / 2
             self._floating = False
         else:
-            self._gap, self._bar, self._top = _FLOAT_GAP, _FLOAT_BAR, _FLOAT_TOP
+            # As tall as the menu bar, as the notch is. It reads 0 when the menu bar hides itself.
+            visible = screen.visibleFrame()
+            menu_bar = frame.origin.y + frame.size.height - visible.origin.y - visible.size.height
+            self._gap, self._top = _FLOAT_GAP, 0
+            self._bar = menu_bar if menu_bar > 0 else NSStatusBar.systemStatusBar().thickness()
             centre = frame.origin.x + frame.size.width / 2
             self._floating = True
         self._panel.setFrame_display_(
@@ -748,9 +753,10 @@ class Overlay:
         self._render()
 
     def _closed(self) -> tuple[float, float, float, float]:
-        """The island folded away: the notch itself, or a small pill on a screen without one."""
+        """The island folded away: the notch itself, or a flat line along the top edge of a screen
+        without one, so the island grows down out of the edge and shrinks back into it."""
         if self._floating:
-            return 120.0, self._bar, self._bar / 2, -self._bar / 2
+            return self._gap, 0.0, 0.0, 0.0
         return self._gap, self._bar, 10.0, _SHOULDER
 
     # State changes
@@ -813,7 +819,8 @@ class Overlay:
                 layer.setPath_(path)
             self._shape.setShadowPath_(path)
             return
-        stiffness, damping = (320, 32) if hidden else (260, 22)
+        # Opening settles in about half a second with a slight overshoot; closing tucks away without one.
+        stiffness, damping = (260, 31) if hidden else (200, 21)
         for layer, key in ((self._shape, "path"), (self._clip, "path"), (self._shape, "shadowPath")):
             _spring(layer, key, path, stiffness, damping)
         shadow = 0.55 if height > self._bar + 1 else 0.0
@@ -824,7 +831,7 @@ class Overlay:
             _tween(self._shape, "opacity", showing, 0.0, 0.14, kCAMediaTimingFunctionEaseIn, delay=0.32)
         else:
             # Also replaces a fade-out still waiting to start.
-            _tween(self._shape, "opacity", showing, 1.0, 0.12 if self._floating and showing < 1 else 0.01)
+            _tween(self._shape, "opacity", showing, 1.0, 0.01)
 
     # Layout: which parts show where, and how big the island is
 
@@ -925,10 +932,9 @@ class Overlay:
         height = self._bar + body
         if rows:
             radius = _OPEN_R
-            shoulder = -18 if self._floating else _SHOULDER
         else:
-            radius = self._bar / 2 if self._floating else _COMPACT_R
-            shoulder = -self._bar / 2 if self._floating else _SHOULDER
+            radius = _COMPACT_R
+        shoulder = _SHOULDER
 
         top = _H - self._top
         island_left, island_right = _W / 2 - width / 2, _W / 2 + width / 2
