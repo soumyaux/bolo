@@ -10,10 +10,6 @@
 </p>
 
 <p align="center">
-  <img src="docs/demo.gif" alt="Illustration: hold fn and speak, a waveform shows in the island at the top of the screen, then let go and the sentence is typed into a message." width="760">
-</p>
-
-<p align="center">
   <img src="docs/how-it-works.svg" alt="1. Hold fn. 2. Speak. 3. Let go, and clean text is typed." width="760">
 </p>
 

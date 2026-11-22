@@ -16,7 +16,6 @@ import time
 import traceback
 from pathlib import Path
 
-import objc
 import Quartz
 import rumps
 from AppKit import (
@@ -25,15 +24,15 @@ from AppKit import (
     NSApplicationActivationPolicyRegular,
     NSBundle,
     NSImage,
-    NSRunningApplication,
     NSWorkspace,
 )
-from ApplicationServices import AXIsProcessTrusted, AXIsProcessTrustedWithOptions, kAXTrustedCheckOptionPrompt
+from ApplicationServices import AXIsProcessTrustedWithOptions, kAXTrustedCheckOptionPrompt
 from PyObjCTools import AppHelper
 
 from . import audio, config, inject, login, sounds, styles, updates
 from .cleanup import Cleaner, prompt_prefix
 from .early import EarlyText, PrefixCheck
+from .keys import _MODIFIERS, parse_shortcut
 from .learn import Learning, ax
 from .learn.ax_watch import Watcher
 from .learn.fix_window import FixWindow
@@ -41,9 +40,10 @@ from .learn.store import PATH as LEARNING_DB
 from .learn.voice import Voice
 from .overlay import Overlay
 from .pending import Pending, Saved
+from .permissions import permissions
 from .settings_window import SettingsWindow
-from .stt.base import BadResult, RateLimited, Unavailable, context_terms, flac_seconds
-from .stt.groq import GroqWhisper
+from .stt.base import context_terms
+from .stt.chain import Chain, build_providers
 from .stt.local_whisper import LocalWhisper, ensure_model
 from .usage import Usage
 
@@ -84,50 +84,6 @@ _SPEAKER_SECONDS, _ECHO_SECONDS = 0.1, 0.06
 _STUCK_SECONDS = 15
 # How often Bolo looks for a new release.
 _UPDATE_EVERY = 6 * 60 * 60
-# Key codes of the letters and the modifier names a shortcut in config.toml may use.
-_LETTERS = {
-    "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7, "c": 8, "v": 9, "b": 11, "q": 12,
-    "w": 13, "e": 14, "r": 15, "y": 16, "t": 17, "o": 31, "u": 32, "i": 34, "p": 35, "l": 37, "j": 38,
-    "k": 40, "n": 45, "m": 46,
-}  # fmt: skip
-_MODIFIERS = {
-    "<ctrl>": Quartz.kCGEventFlagMaskControl,
-    "<alt>": Quartz.kCGEventFlagMaskAlternate,
-    "<cmd>": Quartz.kCGEventFlagMaskCommand,
-    "<shift>": Quartz.kCGEventFlagMaskShift,
-}
-
-
-def _sees_window_titles() -> bool:
-    """macOS hides other apps' window titles without Screen Recording. The preflight call can
-    answer no for an unsigned app that has it, so this checks what the app can actually see."""
-    windows = Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID)
-    me = NSRunningApplication.currentApplication().processIdentifier()
-    # The Dock's and the menu bar's window titles are visible to every app.
-    return any(
-        w.get("kCGWindowName")
-        for w in windows or []
-        if w.get("kCGWindowOwnerPID") != me and w.get("kCGWindowOwnerName") not in ("Dock", "Window Server")
-    )
-
-
-def permissions() -> dict[str, bool]:
-    """Which macOS privacy permissions this app has. Asks for none of them."""
-    NSBundle.bundleWithPath_("/System/Library/Frameworks/AVFoundation.framework").load()
-    microphone = objc.lookUpClass("AVCaptureDevice").authorizationStatusForMediaType_("soun") == 3
-    # Only an app with Full Disk Access can open the privacy database.
-    try:
-        open(Path.home() / "Library/Application Support/com.apple.TCC/TCC.db", "rb").close()
-        full_disk = True
-    except OSError:
-        full_disk = False
-    return {
-        "Accessibility": bool(AXIsProcessTrusted()),
-        "Input Monitoring": bool(Quartz.CGPreflightListenEventAccess()),
-        "Microphone": microphone,
-        "Screen Recording": bool(Quartz.CGPreflightScreenCaptureAccess()) or _sees_window_titles(),
-        "Full Disk Access": full_disk,
-    }
 
 
 def open_up_front_app(learning: bool) -> None:
@@ -136,88 +92,6 @@ def open_up_front_app(learning: bool) -> None:
     app = NSWorkspace.sharedWorkspace().frontmostApplication()
     if app and (learning or (app.bundleIdentifier() or "") in styles.BROWSERS):
         ax.open_up(app.processIdentifier(), app.bundleIdentifier() or "")
-
-
-def parse_shortcut(text: str) -> tuple[int, int] | None:
-    """Turns "<ctrl>+<alt>+f" into (key code, modifier flags). None when it cannot be read."""
-    code, flags = None, 0
-    for part in text.lower().replace(" ", "").split("+"):
-        if part in _MODIFIERS:
-            flags |= _MODIFIERS[part]
-        elif part in _LETTERS and code is None:
-            code = _LETTERS[part]
-        else:
-            return None
-    return (code, flags) if code is not None and flags else None
-
-
-class Chain:
-    """Tries providers in order and rests one that failed while another can answer. A provider
-    with its own reachability check (Groq) is skipped at once while it is known to be down."""
-
-    def __init__(self, providers: list):
-        self.providers = providers
-        self._rest_until: dict[str, float] = {}
-
-    def _ready(self) -> list:
-        now = time.monotonic()
-        return [
-            p for p in self.providers if now >= self._rest_until.get(p.name, 0) and getattr(p, "available", True)
-        ]
-
-    def first_ready(self):
-        """The provider that would be tried first now, or None."""
-        return (self._ready() or self.providers or [None])[0]
-
-    def transcribe(self, flac: bytes, vocabulary: list[str]) -> tuple[str, str]:
-        errors = []
-        ready = self._ready() or self.providers
-        # A provider can pass on a clip (Groq: too short, or near its free limit) while another can take it.
-        seconds = flac_seconds(flac)
-        ready = [p for p in ready if getattr(p, "takes", lambda _: True)(seconds)] or ready
-        for provider in ready:
-            try:
-                return provider.transcribe(flac, vocabulary), provider.name
-            except RateLimited as e:
-                self._rest_until[provider.name] = time.monotonic() + (e.retry_after or 60)
-                errors.append(str(e))
-            except BadResult as e:
-                errors.append(str(e))
-            except Unavailable as e:
-                if hasattr(provider, "went_down"):
-                    # Its own check brings it back as soon as it answers again.
-                    provider.went_down()
-                else:
-                    self._rest_until[provider.name] = time.monotonic() + 30
-                errors.append(str(e))
-            log.warning("%s", errors[-1])
-        raise Unavailable("; ".join(errors) or "no speech provider is set up")
-
-
-def build_providers(cfg: dict) -> list:
-    providers = []
-    for name in cfg["stt"]["order"]:
-        if name == "groq" and config.key("GROQ_API_KEY"):
-            groq = cfg["stt"].get("groq", {})
-            providers.append(
-                GroqWhisper(
-                    config.key("GROQ_API_KEY"),
-                    model=groq.get("model", "whisper-large-v3"),
-                    language=groq.get("language", ""),
-                    timeout=cfg["stt"]["timeout_seconds"],
-                    local_under=groq.get("local_under_seconds", 0),
-                    saving_from=groq.get("saving_from", 0.7),
-                    usage_file=LEARNING_DB.parent / "groq_usage.json",
-                )
-            )
-        elif name == "local":
-            local = cfg["stt"]["local"]
-            providers.append(
-                LocalWhisper(local["model"], local["languages"], local["unload_after_idle_minutes"])
-            )
-        else:
-            log.info("provider %s is skipped: not set up on this Mac", name)
-    return providers
 
 
 class BoloApp(rumps.App):
