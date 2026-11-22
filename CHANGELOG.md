@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Anonymous analytics now sends the new word-count number about once an hour instead of once a day. Still never your words, audio, name or any ID.
+
 ## 1.1.0 (2026-11-23)
 
 **After updating:** macOS asks you one last time to allow Bolo again (Microphone, Accessibility, Input Monitoring), because Bolo.app is now signed with its own certificate. After this, updates keep the permissions.

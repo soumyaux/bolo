@@ -51,7 +51,7 @@ Then allow Bolo in **System Settings › Privacy & Security**, quit it from the 
 ## Good to know
 
 - 🔒 **Private.** Without a Groq key, your voice never leaves your Mac.
-- 📊 **Anonymous analytics.** One +1 at install and a daily word-count number. Never your words, audio, name or any ID. [What is sent](docs/GUIDE.md#privacy).
+- 📊 **Anonymous analytics.** One +1 at install and a word-count number about once an hour. Never your words, audio, name or any ID. [What is sent](docs/GUIDE.md#privacy).
 - 🔄 **Updates.** The **b** menu tells you when a new version is out. One click installs it.
 - 🗑 **Uninstall:** `curl -fsSL https://raw.githubusercontent.com/soumyaux/bolo/main/uninstall.sh | bash`
 

@@ -21,7 +21,7 @@ async function badge(name, env) {
   const row = await env.DB.prepare("SELECT value FROM totals WHERE name = ?").bind(name).first();
   return Response.json(
     { schemaVersion: 1, label: LABELS[name], message: compact.format(row?.value ?? 0), color: "2563eb" },
-    { headers: { "cache-control": "public, max-age=3600" } },
+    { headers: { "cache-control": "public, max-age=300" } },
   );
 }
 

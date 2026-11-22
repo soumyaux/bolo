@@ -203,10 +203,14 @@ class BoloApp(rumps.App):
             lambda _: threading.Thread(target=self._check_update, daemon=True).start(), _UPDATE_EVERY
         )
         self._update_timer.start()
+        # Anonymous analytics: the new word count, now and then about once an hour.
+        self._stats_timer = rumps.Timer(
+            lambda _: threading.Thread(target=stats.report, daemon=True).start(), stats.EVERY_SECONDS
+        )
+        self._stats_timer.start()
 
     def _check_update(self, told: bool = False) -> None:
         """Worker thread. told=True when the user asked, so the answer is shown either way."""
-        stats.daily()
         installed = updates.current()
         try:
             latest = updates.latest()

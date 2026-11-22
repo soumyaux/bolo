@@ -153,7 +153,7 @@ open "$HOME/Applications/Bolo.app"
 
 # Anonymous analytics: one +1 for a new install, with no ID.
 if [ "$NEW_INSTALL" = 1 ]; then
-  echo "Bolo uses anonymous analytics: one +1 for this install, then a daily word-count number."
+  echo "Bolo uses anonymous analytics: one +1 for this install, then a word-count number about once an hour."
   echo "Never your words, audio, name or any ID."
   curl -fsS -m 4 -X POST https://bolo-count.soumyasahoo.in/v1/install >/dev/null 2>&1 || true
 fi
