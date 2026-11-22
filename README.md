@@ -10,9 +10,9 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fbolo-count.soumyasahoo.in%2Fv1%2Fbadge%2Fwords" alt="Words dictated">
-  <img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fbolo-count.soumyasahoo.in%2Fv1%2Fbadge%2Finstalls" alt="Installs">
-  <a href="https://github.com/soumyaux/bolo/stargazers"><img src="https://img.shields.io/github/stars/soumyaux/bolo?color=2563eb" alt="GitHub stars"></a>
+  <img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fbolo-count.soumyasahoo.in%2Fv1%2Fbadge%2Fwords&style=for-the-badge" alt="Words dictated" height="40">
+  <img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fbolo-count.soumyasahoo.in%2Fv1%2Fbadge%2Finstalls&style=for-the-badge" alt="Installs" height="40">
+  <a href="https://github.com/soumyaux/bolo/stargazers"><img src="https://img.shields.io/github/stars/soumyaux/bolo?color=2563eb&label=github%20stars&logo=github&style=for-the-badge" alt="GitHub stars" height="40"></a>
 </p>
 
 <p align="center">
