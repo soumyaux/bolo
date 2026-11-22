@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.0.0 (2026-11-22)
+
+Faster, types as you watch, and learns without making new mistakes.
+
+**After updating:** macOS asks you once to allow Bolo again (Microphone, Accessibility, Input Monitoring) in System Settings › Privacy & Security, because Bolo.app now carries its own icon. Then quit Bolo from the b menu and open it again.
+
+- Settings › Speech: choose the microphone, the language (English by default, or English + Hindi), and Groq or this Mac only (for VPNs and offline).
+- English only is about twice as fast on short dictations.
+- Text is typed into the text box word by word. Lists and code editors still get a paste.
+- Text now goes into web and Electron text boxes (Gmail, Slack) instead of only being copied.
+- Learning no longer turns ordinary words into others ("then" into "when", "mode" into "more"), and ignores numbers and typos made while editing. Fixing several words at once teaches all of them.
+- New Settings look with Liquid Glass, and a Restart Bolo button.
+- The blue b icon shows everywhere, also in Finder and when Bolo quits.
+- The log keeps earlier runs (`~/Library/Logs/Bolo-history.log`) and never contains what you said.
+- Voice clips for training are off by default.
+- Security: patched packages, the installer only installs the tested versions, and every change is checked for known vulnerabilities.
+
 ## 0.2.0 (2026-10-21)
 
 A new look in white and blue.
