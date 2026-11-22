@@ -71,21 +71,35 @@ ollama_bin() {
   done
 }
 OLLAMA="$(ollama_bin || true)"
-if [ -z "$OLLAMA" ] && [ "$FIRST" = 1 ]; then
-  reply="$(ask "Install Ollama for text cleanup (punctuation, lists, styles)? [Y/n]")"
-  if [[ ! "$reply" =~ ^[Nn] ]]; then
-    say "Installing Ollama into ~/Applications"
-    tmp="$(mktemp -d)"
-    curl -fL --progress-bar -o "$tmp/Ollama.zip" https://ollama.com/download/Ollama-darwin.zip
-    mkdir -p "$HOME/Applications"
-    ditto -x -k "$tmp/Ollama.zip" "$HOME/Applications"
-    rm -rf "$tmp"
-    OLLAMA="$HOME/Applications/Ollama.app/Contents/Resources/ollama"
+WANT_CLEANUP=0
+if [ "$FIRST" = 1 ]; then
+  memory_gb=$(( $(sysctl -n hw.memsize) / 1073741824 ))
+  free_gb="$(df -g "$SUPPORT" | awk 'NR==2 {print $4}')"
+  echo
+  echo "Optional AI cleanup fixes punctuation, lists and writing styles, on this Mac."
+  if [ -n "$OLLAMA" ]; then echo "  Download: about 2 GB"; else echo "  Download: about 2 GB, plus the Ollama app"; fi
+  echo "  Dictation works without it, and this Mac has $free_gb GB free."
+  prompt="Add AI cleanup? [Y/n]"
+  if [ "$memory_gb" -le 8 ] || [ "$free_gb" -lt 5 ]; then
+    [ "$memory_gb" -le 8 ] && printf '\033[33m  This Mac has %s GB of memory. Speech and cleanup together can slow it down.\033[0m\n' "$memory_gb"
+    [ "$free_gb" -lt 5 ] && printf '\033[33m  Cleanup needs about 5 GB free with the speech model.\033[0m\n'
+    prompt="Add AI cleanup anyway? [y/N]"
+    [[ "$(ask "$prompt")" =~ ^[Yy] ]] && WANT_CLEANUP=1
   else
-    setup set cleanup.enabled false
+    [[ "$(ask "$prompt")" =~ ^[Nn] ]] || WANT_CLEANUP=1
   fi
+  [ "$WANT_CLEANUP" = 1 ] || setup set cleanup.enabled false
 fi
-if [ -n "$OLLAMA" ] && [ "$FIRST" = 1 ]; then
+if [ -z "$OLLAMA" ] && [ "$WANT_CLEANUP" = 1 ]; then
+  say "Installing Ollama into ~/Applications"
+  tmp="$(mktemp -d)"
+  curl -fL --progress-bar -o "$tmp/Ollama.zip" https://ollama.com/download/Ollama-darwin.zip
+  mkdir -p "$HOME/Applications"
+  ditto -x -k "$tmp/Ollama.zip" "$HOME/Applications"
+  rm -rf "$tmp"
+  OLLAMA="$HOME/Applications/Ollama.app/Contents/Resources/ollama"
+fi
+if [ "$WANT_CLEANUP" = 1 ]; then
   if ! curl -fs "$OLLAMA_URL/api/version" >/dev/null 2>&1; then
     nohup "$OLLAMA" serve >>"$HOME/Library/Logs/Ollama.log" 2>&1 &
     for _ in $(seq 20); do curl -fs "$OLLAMA_URL/api/version" >/dev/null 2>&1 && break; sleep 0.5; done
@@ -97,13 +111,19 @@ if [ -n "$OLLAMA" ] && [ "$FIRST" = 1 ]; then
   choice="$(ask "Choose 1 or 2 [1]:")"
   model="qwen2.5:3b"; [ "$choice" = 2 ] && model="llama3.2:3b"
   say "Downloading $model (about 2 GB)"
-  "$OLLAMA" pull "$model"
-  setup set cleanup.model "$model"
-  setup set prompt_mode.model "$model"
+  # A failed download must not stop the install: dictation works without cleanup.
+  if "$OLLAMA" pull "$model"; then
+    setup set cleanup.enabled true
+    setup set cleanup.model "$model"
+    setup set prompt_mode.model "$model"
+  else
+    printf '\033[33mCleanup model did not download. Bolo will work without cleanup.\033[0m\n'
+    setup set cleanup.enabled false
+  fi
 fi
 
 # 6. The local speech model.
-say "Getting the local speech model"
+say "Getting the local speech model (about 1.5 GB, needed once)"
 setup models
 
 # 7. The only required question.
