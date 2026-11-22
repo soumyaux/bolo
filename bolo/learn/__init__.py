@@ -22,8 +22,21 @@ _ODD = re.compile(r"[^\w\s.'@&+#/-]|\b[A-Z]+[a-z]\b|\b[a-z]+[A-Z]\w*|\b\w*[a-z][
 _UNPRINTABLE = re.compile(r"[\ue000-\uf8ff\x00-\x08\x0b-\x1f\x7f]")
 
 
+# A word split by case into a piece too short to be a real part ("MapedsKu"), unlike "GitHub".
+_SHORT_HUMP = re.compile(r"[a-z][A-Z][a-z]?\b")
+# Capitals that spell a word but are usually meant as letters.
+_ACRONYMS = {"AI", "AM", "PM", "ID", "IT", "OK", "TV", "UK", "US", "USA"}
+
+
+def _shouting(word: str) -> bool:
+    """An ordinary word typed in capitals ("IF", "TEASER") is a slip of Caps Lock, not a name."""
+    return len(word) >= 2 and word not in _ACRONYMS and word.isupper() and word.isalpha() and diff.english(word)
+
+
 def _junk(intended: str) -> bool:
-    return bool(_ODD.search(intended))
+    if _ODD.search(intended) or _SHORT_HUMP.search(intended):
+        return True
+    return any(_shouting(w) for w in re.findall(r"[\w']+", intended))
 
 
 def usable(heard: str, intended: str) -> bool:

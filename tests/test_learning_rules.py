@@ -22,3 +22,12 @@ def test_mis_heard_names_are_learned():
 
 def test_word_endings_count_as_english():
     assert english("updated") and english("multiplied") and english("pooled")
+
+
+def test_capitals_on_ordinary_words_and_short_humps_are_typos():
+    assert not usable("iaf", "IF")
+    assert not usable("treasure", "TEASER")
+    assert not usable("maptestku", "MapedsKu")
+    assert usable("github", "GitHub")
+    assert usable("kpa", "KPI")
+    assert usable("okay", "OK")
