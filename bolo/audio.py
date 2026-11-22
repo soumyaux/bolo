@@ -85,11 +85,34 @@ _BAND_RANGE = 30.0  # dB above a band's own noise that fills its bar
 # Blocks of 16 ms at 16 kHz, so the meter gets a new reading every display frame or two.
 _BLOCK = 256
 
+def input_names() -> list[str]:
+    """The names of the microphones the Mac can record from, for the Settings window."""
+    try:
+        names = [d["name"] for d in sd.query_devices() if d["max_input_channels"] > 0]
+    except Exception as e:
+        log.warning("microphone list not read: %s", e)
+        return []
+    return list(dict.fromkeys(names))
+
+
+def _input_index(name: str) -> int | None:
+    """PortAudio's index for the microphone with this name, or None for the Mac's default (also
+    when that microphone is not connected now)."""
+    if not name:
+        return None
+    for index, device in enumerate(sd.query_devices()):
+        if device["name"] == name and device["max_input_channels"] > 0:
+            return index
+    return None
+
+
 class Recorder:
     """Records 16-bit mono audio between start() and stop()."""
 
-    def __init__(self, sample_rate: int = 16000, max_seconds: float = 300):
+    def __init__(self, sample_rate: int = 16000, max_seconds: float = 300, microphone: str = ""):
         self.sample_rate = sample_rate
+        # A microphone's name from Settings; "" follows the Mac's own choice.
+        self.microphone = microphone
         self._max_frames = int(max_seconds * sample_rate)
         self._chunks: list[np.ndarray] = []
         self._frames = 0
@@ -194,7 +217,11 @@ class Recorder:
                 sd._terminate()
                 sd._initialize()
                 self._refresh = False
+            device = _input_index(self.microphone)
+            if self.microphone and device is None:
+                log.info("chosen microphone is not connected; using the Mac's default")
             stream = sd.InputStream(
+                device=device,
                 samplerate=self.sample_rate,
                 channels=1,
                 dtype="int16",

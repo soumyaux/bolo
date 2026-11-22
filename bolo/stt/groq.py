@@ -171,6 +171,7 @@ class GroqWhisper:
         # None until the first check has answered; only True lets requests through.
         self._up: bool | None = None
         self._wake = threading.Event()
+        self._closed = False
         threading.Thread(target=self._watch, daemon=True, name="groq-check").start()
 
     @property
@@ -223,9 +224,15 @@ class GroqWhisper:
             self._set(response.status_code < 500, f"HTTP {response.status_code}")
         return bool(self._up)
 
+    def close(self) -> None:
+        """Stops the background check; used when Settings replace this provider."""
+        self._closed = True
+        self._wake.set()
+        self._client.close()
+
     def _watch(self) -> None:
         network, last = _network(), 0.0
-        while True:
+        while not self._closed:
             now = time.monotonic()
             changed = _network()
             due = _RECHECK_SECONDS if not self._up else _CHECK_SECONDS
@@ -272,5 +279,6 @@ class GroqWhisper:
             reason = broken(text, "")
         if reason:
             # The local model tries this clip instead.
-            raise BadResult(f"{self.name}: transcript {reason}: {text[:60]!r}")
+            # Says what was wrong, never what was said: this ends up in the log.
+            raise BadResult(f"{self.name}: transcript {reason} ({len(text)} chars)")
         return text

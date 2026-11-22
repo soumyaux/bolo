@@ -11,6 +11,9 @@ sample_rate = 16000
 # Clips shorter than this are treated as an accidental tap and dropped.
 min_seconds = 0.3
 max_seconds = 300
+# The microphone's name as Settings › Speech lists it. "" uses the Mac's own choice, and so does a
+# microphone that is not connected.
+microphone = ""
 # Silence the Mac's speakers while the key is held, then put the sound back.
 mute_while_recording = true
 # Double-tap the talk key to keep recording without holding it; tap it once more to finish.
@@ -33,6 +36,11 @@ volume = 0.5
 start = "Tink"
 stop = "Pop"
 error = "Basso"
+
+[typing]
+# Types the text into the text box word by word, so it appears as if written (under half a second).
+# Text with several lines and code editors get a paste instead.
+animate = true
 
 [overlay]
 # While the cleanup model works, the island under the notch shows the words it is cleaning.
@@ -61,14 +69,14 @@ model = "whisper-large-v3"
 # Below it, every clip goes to Groq for the best accuracy.
 saving_from = 0.7
 local_under_seconds = 4
-# "" picks the language per clip, which keeps Hindi as Hindi. "en" for English only.
-language = ""
+# "en" for English only. "" picks the language per clip, which keeps Hindi as Hindi.
+language = "en"
 
 [stt.local]
 model = "mlx-community/whisper-large-v3-turbo"
 # Each clip is heard as whichever of these fits best. Hindi comes out in Hindi script and the
-# cleanup pass rewrites it in Roman letters. Use ["en"] for English only.
-languages = ["en", "hi"]
+# cleanup pass rewrites it in Roman letters. ["en"] alone is about twice as fast: no language check.
+languages = ["en"]
 # The model uses about 2 GB of memory while loaded; it is freed after this much idle time.
 # Reloading takes about 4 s, so it stays loaded a while as the fallback for Groq.
 unload_after_idle_minutes = 30
@@ -142,10 +150,10 @@ enabled = true
 # Works in Mac text fields, Cursor, VS Code, Slack and Chromium browsers; not in terminals.
 # Where it cannot read the field, use fix_last instead.
 auto_capture = true
-# Keeps each dictation's audio (up to 30 s long) on this Mac, readable by you only, to train the
+# Off by default. Keeps each dictation's audio (up to 30 s long) on this Mac, readable by you only, to train the
 # speech model on your voice (scripts/train_voice.py). Deleted as soon as a training run has used
 # it, and after voice_keep_days at the latest.
-save_voice = true
+save_voice = false
 voice_keep_days = 14
 
 [dictionary]

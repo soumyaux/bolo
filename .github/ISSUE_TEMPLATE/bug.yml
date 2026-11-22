@@ -36,5 +36,5 @@ body:
     id: log
     attributes:
       label: Log excerpt
-      description: The lines around the problem from ~/Library/Logs/Bolo.log.
+      description: The lines around the problem from ~/Library/Logs/Bolo.log (this run) or ~/Library/Logs/Bolo-history.log (earlier runs).
       render: text

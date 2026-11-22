@@ -14,3 +14,5 @@ jobs:
       - run: uv sync
       - run: uv run ruff check bolo tests scripts
       - run: uv run pytest -q
+      # Fails when a package in uv.lock has a known security hole.
+      - run: uv export --frozen --no-hashes --format requirements-txt > requirements.txt && uvx pip-audit -r requirements.txt --no-deps --disable-pip

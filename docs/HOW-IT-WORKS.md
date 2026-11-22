@@ -10,7 +10,7 @@
    For long dictations, the local model turns finished pieces into text while you are still speaking.
 4. **Learned words.** Corrections you made before ("cable" → "table") are applied, and your dictionary terms and learned words are sent as spelling hints.
 5. **Cleanup.** A local pass removes fillers and repeats and fixes dictionary spellings. When the text needs more (lists, punctuation, a per-app style, prompt mode), a small model in **Ollama** on the Mac rewrites it. A result that drops spoken words or answers the text instead of cleaning it is thrown away.
-6. **Paste.** The text goes on the clipboard, ⌘V is sent to the focused app, and the old clipboard is put back. With no text box focused, the text is left on the clipboard.
+6. **Type or paste.** One line of text is typed into the text box word by word (`typing.animate`). Text with several lines, or text for a code editor, goes on the clipboard, ⌘V is sent to the focused app, and the old clipboard is put back. With no text box focused, the text is left on the clipboard.
 
 After a paste, Bolo can watch the text field for up to 90 s and learn from how you edit what it typed (or use ⌃⌥F, *Fix last dictation*).
 
@@ -44,11 +44,11 @@ Everything is in `~/Library/Application Support/Bolo/`, readable by your user on
 | `config.toml` | Your settings (over `config.default.toml`) | Until you change it |
 | `.env` | Your Groq key | Until you remove it |
 | `learning.db` | Last 200 dictations' text, learned words, up to 200 style examples | Rolling |
-| `voice/` | Audio clips for voice training (only with `learning.save_voice`) | Until used, 14 days at most |
+| `voice/` | Audio clips for voice training (only with `learning.save_voice`, off by default) | Until used, 14 days at most |
 | `pending/` | Audio of dictations that could not be transcribed | Until pasted, 24 h at most |
 | `usage.json`, `groq_usage.json` | Counts only, never text | Rolling |
 
-The log is `~/Library/Logs/Bolo.log`. It never contains what you said.
+The log is `~/Library/Logs/Bolo.log` for the current run and `~/Library/Logs/Bolo-history.log` for earlier runs (2 MB at most). Neither contains what you said.
 
 ## Privacy
 

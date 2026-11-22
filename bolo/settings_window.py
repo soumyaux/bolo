@@ -31,7 +31,7 @@ from AppKit import (
 )
 from Foundation import NSMakeRect
 
-from . import sounds
+from . import audio, config, sounds
 from .learn.fix_window import _install_edit_menu
 from .styles import STYLES
 
@@ -41,6 +41,10 @@ _ROW = 30
 # Talk keys, as in app._KEYS, with the names shown in the window.
 KEYS = [("cmd_r", "Right ⌘"), ("alt_r", "Right ⌥"), ("ctrl_r", "Right ⌃"), ("fn", "fn")]
 _NO_SOUND = "None"
+_DEFAULT_MIC = "Mac default"
+# (local languages, Groq language, name shown).
+LANGUAGES = [(["en"], "en", "English"), (["en", "hi"], "", "English + Hindi")]
+ENGINES = [(["groq", "local"], "Groq online, this Mac when offline"), (["local"], "This Mac only (offline, works on VPN)")]
 
 
 def app_name(key: str) -> str:
@@ -191,6 +195,25 @@ class SettingsWindow:
         y -= _ROW
         self._show_words = self._check(view, "Show my words in the island while writing", y)
 
+    def _speech(self, view, top: float) -> None:
+        y = top - _ROW
+        self._label(view, "Microphone", y)
+        self._mic = self._popup(view, [_DEFAULT_MIC], y, width=300)
+        y -= _ROW + 8
+        self._label(view, "Language you speak", y)
+        self._language = self._popup(view, [name for _, _, name in LANGUAGES], y, width=300)
+        note = NSTextField.wrappingLabelWithString_("English only is about twice as fast on this Mac.")
+        note.setFrame_(NSMakeRect(_MARGIN + _LABEL, y - 22, 320, 18))
+        note.setFont_(NSFont.systemFontOfSize_(11))
+        note.setTextColor_(NSColor.secondaryLabelColor())
+        view.addSubview_(note)
+        y -= _ROW + 26
+        self._label(view, "Speech engine", y)
+        self._engine = self._popup(view, [name for _, name in ENGINES], y, width=300)
+        y -= _ROW + 8
+        self._label(view, "Writing the text", y)
+        self._animate = self._check(view, "Type it word by word into the text box", y)
+
     def _dictionary(self, view, top: float) -> None:
         half = (_WIDTH - 2 * _MARGIN - 40 - 16) / 2
         for i, (title, note) in enumerate(
@@ -253,7 +276,7 @@ class SettingsWindow:
         self._panel.setReleasedWhenClosed_(False)
         content = self._panel.contentView()
         tabs = NSTabView.alloc().initWithFrame_(NSMakeRect(12, 52, _WIDTH - 24, _HEIGHT - 60))
-        for title, fill in (("General", self._general), ("Dictionary", self._dictionary), ("Apps and prompts", self._apps_tab)):
+        for title, fill in (("General", self._general), ("Speech", self._speech), ("Dictionary", self._dictionary), ("Apps and prompts", self._apps_tab)):
             item = NSTabViewItem.alloc().initWithIdentifier_(title)
             item.setLabel_(title)
             tabs.addTabViewItem_(item)
@@ -291,6 +314,19 @@ class SettingsWindow:
         self._early.setState_(bool(get("audio", "chunk_seconds", 6)))
         self._guard.setState_(get("audio", "guard_window", True))
         self._show_words.setState_(get("overlay", "show_words", True))
+        self._mic.removeAllItems()
+        self._mic.addItemsWithTitles_([_DEFAULT_MIC] + audio.input_names())
+        self._choose(self._mic, get("audio", "microphone", "") or _DEFAULT_MIC)
+        languages = cfg.get("stt", {}).get("local", {}).get("languages", ["en"])
+        self._choose(self._language, next((name for langs, _, name in LANGUAGES if langs == languages), LANGUAGES[0][2]))
+        order = cfg.get("stt", {}).get("order", ["local"])
+        has_key = bool(config.key("GROQ_API_KEY"))
+        self._engine.setAutoenablesItems_(False)
+        self._engine.itemAtIndex_(0).setEnabled_(has_key)
+        if not has_key:
+            self._engine.itemAtIndex_(0).setTitle_(ENGINES[0][1] + " (needs a Groq key)")
+        self._engine.selectItemAtIndex_(0 if has_key and "groq" in order else 1)
+        self._animate.setState_(get("typing", "animate", True))
         self._terms.setString_("\n".join(get("dictionary", "terms", [])))
         self._hints.setString_("\n".join(get("dictionary", "hints", [])))
         self._apps = [[key, style] for key, style in cfg.get("styles", {}).get("apps", {}).items()]
@@ -349,7 +385,14 @@ class SettingsWindow:
         sound = lambda kind: "" if (t := str(self._sound_popups[kind].titleOfSelectedItem())) == _NO_SOUND else t  # noqa: E731
         old_chunk = self._cfg.get("audio", {}).get("chunk_seconds", 6) or 6
         old_apps = self._cfg.get("styles", {}).get("apps", {})
+        mic = str(self._mic.titleOfSelectedItem())
+        local, groq, _ = LANGUAGES[self._language.indexOfSelectedItem()]
         return {
+            ("audio", "microphone"): "" if mic == _DEFAULT_MIC else mic,
+            ("stt", "local", "languages"): local,
+            ("stt", "groq", "language"): groq,
+            ("stt", "order"): ENGINES[self._engine.indexOfSelectedItem()][0],
+            ("typing", "animate"): bool(self._animate.state()),
             ("hotkey", "push_to_talk"): talk,
             ("audio", "hands_free"): bool(self._hands_free.state()),
             ("audio", "mute_while_recording"): bool(self._mute.state()),

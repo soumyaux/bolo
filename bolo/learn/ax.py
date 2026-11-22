@@ -105,6 +105,26 @@ _NOT_TEXT_ROLES = {
 _FINDER = "com.apple.finder"
 
 
+# Roles a text box's own contents can report as having the focus.
+_INSIDE_TEXT_ROLES = {"AXStaticText", "AXLink", "AXGroup", "AXCell", "AXRow", "AXImage"}
+# How far up to look for the text box holding the focused element.
+_PARENT_LEVELS = 8
+
+
+def _in_text_box(element) -> bool:
+    """True when the element sits inside a text box or an editable part of a web page."""
+    for _ in range(_PARENT_LEVELS):
+        element = _get(element, "AXParent")
+        if element is None:
+            return False
+        role = _get(element, "AXRole")
+        if role in _TEXT_ROLES or _get(element, "AXEditableAncestor") is not None:
+            return True
+        if role in ("AXWebArea", "AXWindow", "AXApplication"):
+            return False
+    return False
+
+
 def typing_target() -> tuple[bool | None, str]:
     """Whether a paste now would land in a text box: True, False, or None when it cannot be told.
     Also returns what has the focus, for the log, such as "AXList in Finder"."""
@@ -121,6 +141,9 @@ def typing_target() -> tuple[bool | None, str]:
             return False, where
         return None, where
     if role in _TEXT_ROLES or _get(element, "AXEditableAncestor") is not None:
+        return True, where
+    if role in _INSIDE_TEXT_ROLES and _in_text_box(element):
+        # Web pages and Electron apps (Slack, Gmail) can report the text inside a box, not the box.
         return True, where
     if role in _NOT_TEXT_ROLES or (front is not None and front.bundleIdentifier() == _FINDER):
         return False, where

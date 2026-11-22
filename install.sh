@@ -58,7 +58,8 @@ case "$ref" in ""|main) ref=origin/main ;; esac
 git -C "$DIR" -c advice.detachedHead=false checkout --quiet --force "$ref"
 say "Installing Bolo $(git -C "$DIR" describe --tags --always)"
 cd "$DIR"
-uv sync --no-dev --frozen 2>/dev/null || uv sync --no-dev
+# Exactly the tested versions in uv.lock; a mismatch stops here instead of installing untested ones.
+uv sync --no-dev --frozen
 setup() { uv run --quiet python -m bolo.setup "$@"; }
 
 # 5. Ollama, for the cleanup pass (optional).

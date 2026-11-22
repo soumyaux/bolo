@@ -103,6 +103,14 @@ class LocalWhisper:
         self._loaded = False
         log.info("local model unloaded after idle")
 
+    def close(self) -> None:
+        """Frees the model now; used when Settings replace this provider."""
+        if self._idle_timer is not None:
+            self._idle_timer.cancel()
+        if self._loaded:
+            self._pool.submit(self._unload)
+        self._pool.shutdown(wait=False)
+
     def _rest_later(self) -> None:
         if self._idle_timer is not None:
             self._idle_timer.cancel()
@@ -141,7 +149,8 @@ class LocalWhisper:
             text = self._decode(samples, "")
             reason = broken(text, "")
         if reason:
-            raise BadResult(f"{self.name}: transcript {reason}: {text[:60]!r}")
+            # Says what was wrong, never what was said: this ends up in the log.
+            raise BadResult(f"{self.name}: transcript {reason} ({len(text)} chars)")
         return text
 
     def _decode(self, samples: np.ndarray, prompt: str) -> str:

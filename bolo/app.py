@@ -6,6 +6,7 @@ Run: uv run python -m bolo.app
 import atexit
 import fcntl
 import logging
+import logging.handlers
 import os
 import queue
 import sys
@@ -48,6 +49,8 @@ from .usage import Usage
 log = logging.getLogger("bolo")
 ICON = Path(__file__).resolve().parent.parent / "assets" / "Bolo.icns"
 MENUBAR_ICON = Path(__file__).resolve().parent.parent / "assets" / "menubar.png"
+# Bolo.log holds this run only; this file keeps earlier runs too.
+HISTORY_LOG = Path.home() / "Library/Logs/Bolo-history.log"
 
 IDLE, RECORDING, BUSY, WARN = "", "🔵", "⏳", "⚠️"
 
@@ -246,7 +249,9 @@ class BoloApp(rumps.App):
             rumps.MenuItem(f"Bolo {updates.current()}"),
             self.update_item,
         ]
-        self.recorder = audio.Recorder(cfg["audio"]["sample_rate"], cfg["audio"]["max_seconds"])
+        self.recorder = audio.Recorder(
+            cfg["audio"]["sample_rate"], cfg["audio"]["max_seconds"], cfg["audio"].get("microphone", "")
+        )
         self.chain = Chain(build_providers(cfg))
         self.cleaner = Cleaner(cfg, self._cleanup_status)
         learning = cfg["learning"]
@@ -548,6 +553,11 @@ class BoloApp(rumps.App):
             # The login copy runs as its own app and needs the permissions granted to it once.
             self.status.title = f"Open {login.NAME} from Applications once and allow access"
 
+    def _animate(self, text: str, style: str) -> bool:
+        """True to type the text word by word instead of pasting it at once. Code editors ("prompt"
+        style) get a paste, since they close brackets and quotes as they are typed."""
+        return bool(self.cfg.get("typing", {}).get("animate", True)) and style != "prompt" and inject.can_type(text)
+
     def _save_settings(self, changes: dict) -> None:
         """Main thread. Writes the settings window's changes to config.toml and applies them now."""
         try:
@@ -563,6 +573,22 @@ class BoloApp(rumps.App):
     def _apply_settings(self, cfg: dict) -> None:
         """Uses new settings without a restart. Keys, hands-free, mute, styles and prompt mode are
         read from self.cfg each time; the rest is rebuilt here."""
+        if cfg["stt"] != self.cfg["stt"]:
+            # A new engine order or language: the old providers are let go and new ones made.
+            old = {provider.name: provider for provider in self.chain.providers}
+            providers = build_providers(cfg)
+            local = old.get("local")
+            for i, provider in enumerate(providers):
+                # The loaded local model is kept when only its languages change: no reload, no
+                # second copy in memory.
+                if isinstance(provider, LocalWhisper) and isinstance(local, LocalWhisper) and local.model == provider.model:
+                    local.languages = provider.languages
+                    providers[i] = local
+            for provider in old.values():
+                if provider not in providers:
+                    getattr(provider, "close", lambda: None)()
+            self.chain = Chain(providers)
+        self.recorder.microphone = cfg["audio"].get("microphone", "")
         self.cfg = cfg
         self.cleaner = Cleaner(cfg, self._cleanup_status)
         threading.Thread(target=self._check_cleanup, daemon=True).start()
@@ -959,6 +985,8 @@ class BoloApp(rumps.App):
         try:
             if typing is False:
                 inject.copy(text)
+            elif self._animate(text, target.style):
+                inject.type_text(text)
             else:
                 inject.paste(text)
         except inject.InjectError as e:
@@ -1182,6 +1210,15 @@ def main() -> None:
     # BOLO_DEBUG=1 also logs each talk-key press and release with its timing.
     level = logging.DEBUG if os.environ.get("BOLO_DEBUG") else logging.INFO
     logging.basicConfig(level=level, format="%(asctime)s %(name)s %(message)s", datefmt="%H:%M:%S")
+    # Bolo.log starts empty at each launch; this one keeps earlier runs too, so a failure can be
+    # looked at after a restart. Two files of 2 MB at most.
+    try:
+        history = logging.handlers.RotatingFileHandler(HISTORY_LOG, maxBytes=2_000_000, backupCount=1)
+        history.setFormatter(logging.Formatter("%(asctime)s %(name)s %(message)s", "%Y-%m-%d %H:%M:%S"))
+        logging.getLogger().addHandler(history)
+        HISTORY_LOG.chmod(0o600)
+    except OSError as e:
+        logging.getLogger("bolo").warning("log history not kept: %s", e)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     # Show in the Dock too. Python is the running process, so its icon is set here; Bolo.app itself stays untouched.
     NSBundle.mainBundle().infoDictionary()["CFBundleName"] = "Bolo"
