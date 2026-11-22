@@ -8,6 +8,8 @@ Run: uv run scripts/accuracy.py                 (held-out clips)
      uv run scripts/accuracy.py --all           (every saved clip)
      uv run scripts/accuracy.py --all --fixed   (only clips you corrected: the fairest score, since an
                                                  uncorrected label is just what one model pasted)
+     add --parakeet to also score NVIDIA Parakeet (needs: uv run --with parakeet-mlx ...)
+     add --vad to keep only the speech Silero VAD finds, with long pauses shortened
 """
 
 import statistics
@@ -25,6 +27,31 @@ from bolo.stt.groq import GroqWhisper
 from bolo.stt.local_whisper import LocalWhisper
 
 STOCK = "mlx-community/whisper-large-v3-turbo"
+
+
+class Parakeet:
+    """NVIDIA Parakeet TDT through parakeet-mlx, English only, no vocabulary prompt. For comparison."""
+
+    name = "parakeet"
+    REPO = "mlx-community/parakeet-tdt-0.6b-v3"
+
+    def __init__(self):
+        self._model = None
+
+    def transcribe(self, flac: bytes, vocabulary=None) -> str:
+        import io
+
+        import mlx.core as mx
+        import soundfile as sf
+        from parakeet_mlx import from_pretrained
+        from parakeet_mlx.audio import get_logmel
+
+        if self._model is None:
+            self._model = from_pretrained(self.REPO)
+            self.transcribe(flac)  # the first run compiles; keep it out of the timings
+        samples, _ = sf.read(io.BytesIO(flac), dtype="float32")
+        mel = get_logmel(mx.array(samples), self._model.preprocessor_config)
+        return self._model.generate(mel)[0].text.strip()
 
 
 def providers(cfg: dict, trained: dict[str, Path] | None = None) -> list:
@@ -46,7 +73,36 @@ def providers(cfg: dict, trained: dict[str, Path] | None = None) -> list:
             model = LocalWhisper(str(path), languages, 0)
             model.name = name
             found.append(model)
+    if "--parakeet" in sys.argv:
+        found.append(Parakeet())
     return found
+
+
+VAD = "--vad" in sys.argv
+
+
+def _speech_only(flac: bytes) -> bytes:
+    """Keeps only the speech Silero VAD finds; pauses become 0.6 s (the best of the settings tried).
+    Needs: uv run --with silero-vad ..."""
+    import io
+
+    import numpy as np
+    import soundfile as sf
+    import torch
+    from silero_vad import get_speech_timestamps, load_silero_vad
+
+    from bolo import audio
+
+    global _vad
+    _vad = _vad or load_silero_vad()
+    samples, rate = sf.read(io.BytesIO(flac), dtype="int16")
+    stamps = get_speech_timestamps(torch.from_numpy(samples / 32768).float(), _vad, sampling_rate=rate, speech_pad_ms=300)
+    gap = np.zeros(int(0.6 * rate), dtype=np.int16)
+    parts = [part for stamp in stamps for part in (gap, samples[stamp["start"] : stamp["end"]])][1:]
+    return audio.to_flac(np.concatenate(parts) if parts else samples[:0], rate)
+
+
+_vad = None
 
 
 def _hear(provider, flac: bytes, vocabulary: list[str]) -> str:
@@ -68,6 +124,8 @@ def evaluate(models: list, voice: Voice, rows, vocabulary: list[str], quiet: boo
         times = seconds[provider.name] = []
         for row in rows:
             flac = voice.path(row).read_bytes()
+            if VAD:
+                flac = _speech_only(flac)
             start = time.perf_counter()
             try:
                 heard = _hear(provider, flac, vocabulary)
