@@ -52,7 +52,8 @@ The log is `~/Library/Logs/Bolo.log` for the current run and `~/Library/Logs/Bol
 
 ## Privacy
 
-- With a Groq key, audio is sent to Groq to be transcribed. Without one, nothing leaves the Mac.
+- With a Groq key, audio is sent to Groq to be transcribed. Without one, audio stays on the Mac.
 - Cleanup runs in Ollama on the Mac.
-- No telemetry, no accounts, no analytics.
-- Every 6 hours Bolo runs `git ls-remote` against GitHub to see if a newer release tag exists (`bolo/updates.py`). Nothing else is sent.
+- No accounts.
+- Anonymous analytics: the installer sends one +1 for a new install, and Bolo sends a daily word-count number (`bolo/stats.py`). Never words, audio, a name or any ID.
+- Every 6 hours Bolo runs `git ls-remote` against GitHub to see if a newer release tag exists (`bolo/updates.py`).

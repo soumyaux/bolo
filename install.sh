@@ -40,6 +40,7 @@ fi
 # 4. Bolo itself. On an update the questions below are skipped; run with --reconfigure to ask again.
 FIRST=1
 [ -f "$SUPPORT/config.toml" ] && FIRST=0
+NEW_INSTALL=$FIRST
 [ "${1:-}" = --reconfigure ] && FIRST=1
 mkdir -p "$SUPPORT"
 if [ -d "$DIR/.git" ]; then
@@ -129,23 +130,13 @@ setup models
 # 7. The only required question.
 if [ "$FIRST" = 1 ]; then
 echo
-key="$(ask "Paste your Groq API key (free at console.groq.com/keys), or press Enter to stay 100% offline:")"
+key="$(ask "Paste your Groq API key (free at console.groq.com/keys), or press Enter to keep your voice on this Mac:")"
 if [ -n "$key" ]; then
   setup groq-key "$key"
   setup set stt.order '["groq", "local"]'
 else
   setup set stt.order '["local"]'
 fi
-fi
-
-# Only asked at a real terminal, so nobody is counted without seeing the question.
-# Older releases cannot count, so they are not asked.
-if [ "$FIRST" = 1 ] && [ -r /dev/tty ] && grep -q count-me bolo/setup.py; then
-  echo
-  echo "Help show how many people use Bolo? This sends one random ID once a day."
-  echo "No name, text or audio, and IP addresses are not stored. Change it any time in Settings."
-  reply="$(ask "Count me in? [Y/n]")"
-  [[ "$reply" =~ ^[Nn] ]] || setup count-me || true
 fi
 
 # 8. Bolo.app.
@@ -159,6 +150,13 @@ else
 fi
 pkill -f "bolo.app" 2>/dev/null || true
 open "$HOME/Applications/Bolo.app"
+
+# Anonymous analytics: one +1 for a new install, with no ID.
+if [ "$NEW_INSTALL" = 1 ]; then
+  echo "Bolo uses anonymous analytics: one +1 for this install, then a daily word-count number."
+  echo "Never your words, audio, name or any ID."
+  curl -fsS -m 4 -X POST https://bolo-count.soumyasahoo.in/v1/install >/dev/null 2>&1 || true
+fi
 
 # 9. Permissions.
 [ "$FIRST" = 1 ] || { say "Bolo is up to date."; exit 0; }

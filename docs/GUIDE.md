@@ -11,7 +11,7 @@ You hold `fn`, say what you want to write, and let go. A second later the text i
 - **Prompt mode.** Start with *"as a prompt…"* and your rambling becomes a tidy prompt for ChatGPT, Claude or Cursor.
 - **Learns your words.** Correct a name once and Bolo spells it right from then on.
 - **Never loses what you said.** If transcription fails, the audio is kept and retried.
-- **Private by default.** Without an API key, nothing leaves your Mac.
+- **Private by default.** Without an API key, your voice never leaves your Mac.
 
 ## Before you start
 
@@ -41,7 +41,7 @@ curl -fsSL https://raw.githubusercontent.com/soumyaux/bolo/main/install.sh | bas
 | --- | --- |
 | Add AI cleanup? | **Yes** if you have more than 8 GB of memory. It tidies punctuation, lists and styles. Dictation works without it. |
 | Which cleanup model? | **1** is the best. Pick **2** if you use Bolo for commercial work (license note below). |
-| Groq API key | Optional. Paste a free key from [console.groq.com/keys](https://console.groq.com/keys) for faster results, or just press Return to stay 100% offline. |
+| Groq API key | Optional. Paste a free key from [console.groq.com/keys](https://console.groq.com/keys) for faster results, or just press Return to keep your voice on your Mac. |
 | Start Bolo when you log in? | **Yes**, unless you'd rather open it yourself. |
 
 The installer downloads everything Bolo needs, so you don't need Python or anything else installed first. It builds **Bolo.app** in your `Applications` folder and opens it. A **b** icon appears in the menu bar.
@@ -104,10 +104,10 @@ It asks before deleting your settings and saved words. Ollama is left installed,
 ## Privacy
 
 - **Without a Groq key**, your voice never leaves your Mac.
-- **With a Groq key**, the audio is sent to [Groq](https://groq.com/privacy-policy/) to be turned into text. Nothing else is sent.
+- **With a Groq key**, the audio is sent to [Groq](https://groq.com/privacy-policy/) to be turned into text.
 - Text cleanup always runs on your Mac.
 - No accounts and no ads. Bolo never collects what you say or type.
-- **User count, only if you say yes.** The installer asks, and Settings › Speech can turn it off. Bolo then sends one random ID at most once a day. The counter stores a scrambled version of that ID and the day, with no name, IP address, text or audio. **Installs** counts different IDs ever seen. **Active users** counts different IDs seen in the last 30 days. People who say no are not counted, so the real numbers can be higher. The counter's code is in [`counter/`](../counter/worker.js).
+- **Anonymous analytics.** The installer sends one +1 for a new install. Once a day Bolo sends one number: how many words you dictated on finished days. It never sends your words, audio, name or any ID, and the counter does not store IP addresses. The counter only adds these to two public totals, installs and words dictated. There is no off switch. The code is in [`counter/`](../counter/worker.js) and [`bolo/stats.py`](../bolo/stats.py).
 - Every few hours Bolo asks GitHub for the list of Bolo versions, to offer updates. That request carries nothing about you or what you said.
 - What Bolo keeps stays on your Mac in `~/Library/Application Support/Bolo/`, readable only by your user account: your settings, the text of your last 200 dictations (so you can fix them and Bolo can learn), and the audio of failed dictations for up to 24 hours. The full list is in [docs/HOW-IT-WORKS.md](HOW-IT-WORKS.md).
 

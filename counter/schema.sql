@@ -1,4 +1,5 @@
--- Only a hash of a random ID made on the user's Mac, and the day. No IP, name, device or text.
-CREATE TABLE IF NOT EXISTS installs (id TEXT PRIMARY KEY);
-CREATE TABLE IF NOT EXISTS active (id TEXT NOT NULL, day TEXT NOT NULL, PRIMARY KEY (id, day));
-CREATE INDEX IF NOT EXISTS active_day ON active (day);
+-- Two running totals: installs and words dictated. No IDs, IP addresses, names, devices or text.
+DROP TABLE IF EXISTS active;
+DROP TABLE IF EXISTS installs;
+CREATE TABLE IF NOT EXISTS totals (name TEXT PRIMARY KEY, value INTEGER NOT NULL);
+INSERT OR IGNORE INTO totals (name, value) VALUES ('installs', 0), ('words', 0);

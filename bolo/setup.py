@@ -4,13 +4,12 @@ Run: uv run python -m bolo.setup models              (downloads the local speech
      uv run python -m bolo.setup set KEY VALUE        (KEY like cleanup.model; VALUE is TOML,
                                                        or plain text for a string)
      uv run python -m bolo.setup groq-key KEY         (saves the Groq key, readable by you only)
-     uv run python -m bolo.setup count-me             (joins the anonymous user count)
 """
 
 import sys
 import tomllib
 
-from . import config, stats
+from . import config
 from .stt.local_whisper import cached_model, ensure_model
 
 
@@ -46,9 +45,6 @@ def main(args: list[str]) -> None:
             set_value(key, value)
         case ["groq-key", key]:
             groq_key(key)
-        case ["count-me"]:
-            config.save({("stats", "share_count"): True})
-            stats.send()
         case _:
             sys.exit(__doc__)
 

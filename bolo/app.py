@@ -205,8 +205,8 @@ class BoloApp(rumps.App):
         self._update_timer.start()
 
     def _check_update(self, told: bool = False) -> None:
-        stats.daily(self.cfg)
         """Worker thread. told=True when the user asked, so the answer is shown either way."""
+        stats.daily()
         installed = updates.current()
         try:
             latest = updates.latest()
@@ -493,7 +493,6 @@ class BoloApp(rumps.App):
         self.cfg = cfg
         self.cleaner = Cleaner(cfg, self._cleanup_status)
         threading.Thread(target=self._check_cleanup, daemon=True).start()
-        threading.Thread(target=stats.daily, args=(cfg,), daemon=True).start()
         self.sounds.update(cfg)
         self.overlay.show_words = cfg.get("overlay", {}).get("show_words", True)
         learning = cfg["learning"]

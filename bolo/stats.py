@@ -1,69 +1,77 @@
-"""The anonymous user count, only for people who said yes.
+"""Anonymous analytics: one number a day, the words dictated on finished days.
 
-Sends one random ID, at most once a day. No name, IP is not stored, and nothing about what was said.
-The ID is made on this Mac and means nothing outside this count.
+Never sends words, audio, a name or any ID. The counter only adds the number to a public total.
 """
 
+import json
 import logging
-import os
-import uuid
-from datetime import UTC, datetime
+import threading
+from datetime import date, timedelta
 
 import httpx
 
-from . import config
+from . import config, usage
 
 log = logging.getLogger(__name__)
-URL = "https://bolo-count.soumyasahoo.in/v1/seen"
+URL = "https://bolo-count.soumyasahoo.in/v1/words"
+MAX_WORDS = 200_000  # the counter refuses more in one report
+_lock = threading.Lock()
 
 
-def _id_file():
-    return config.USER_DIR / "stats_id"
+def _sent_file():
+    return config.USER_DIR / "words_sent_through"
 
 
-def _day_file():
-    return config.USER_DIR / "stats_day"
+def _forget_old_id() -> None:
+    """Removes what the earlier opt-in count left on this Mac."""
+    for name in ("stats_id", "stats_day"):
+        (config.USER_DIR / name).unlink(missing_ok=True)
 
 
-def _today() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%d")
-
-
-def _random_id() -> str:
-    path = _id_file()
+def _sent_through() -> date | None:
     try:
-        value = path.read_text().strip()
-        if str(uuid.UUID(value, version=4)) == value:
-            return value
+        return date.fromisoformat(_sent_file().read_text().strip())
     except (OSError, ValueError):
-        pass
-    value = str(uuid.uuid4())
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
-        f.write(value)
-    return value
+        return None
 
 
-def send() -> bool:
-    """Counts this Mac for today. A failure is ignored and tried again at the next check."""
+def _mark_sent(day: date) -> None:
+    _sent_file().parent.mkdir(parents=True, exist_ok=True)
+    _sent_file().write_text(day.isoformat())
+
+
+def _words_between(after: date, through: date) -> int:
     try:
-        response = httpx.post(URL, json={"id": _random_id()}, timeout=4)
-        if response.status_code != 204:
-            return False
-        _day_file().write_text(_today())
-        return True
-    except (httpx.HTTPError, OSError) as e:
-        log.info("user count not sent: %s", type(e).__name__)
-        return False
+        days = json.loads(usage.PATH.read_text()).get("local", {})
+    except (OSError, ValueError, AttributeError):
+        return 0
+    total = 0
+    for name, numbers in days.items():
+        try:
+            if after < date.fromisoformat(name) <= through:
+                total += max(0, int(numbers.get("words", 0)))
+        except (ValueError, TypeError, AttributeError):
+            continue
+    return total
 
 
-def daily(cfg: dict) -> None:
-    """Sends the count once a day, and only when the user said yes."""
-    if not cfg.get("stats", {}).get("share_count", False):
-        return
-    try:
-        if _day_file().read_text().strip() == _today():
-            return
-    except OSError:
-        pass
-    send()
+def daily() -> None:
+    """Reports finished days once. A failure is ignored and tried again at the next check."""
+    with _lock:
+        try:
+            _forget_old_id()
+            yesterday = date.today() - timedelta(days=1)
+            sent = _sent_through()
+            if sent is None:  # counting starts now, earlier days are not reported
+                _mark_sent(yesterday)
+                return
+            if sent >= yesterday:
+                return
+            words = min(_words_between(sent, yesterday), MAX_WORDS)
+            if words:
+                response = httpx.post(URL, json={"words": words}, timeout=4)
+                if response.status_code != 204:
+                    return
+            _mark_sent(yesterday)
+        except (httpx.HTTPError, OSError) as e:
+            log.info("analytics not sent: %s", type(e).__name__)
