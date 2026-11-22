@@ -49,6 +49,10 @@ class EarlyText:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
+
+    def add_vocabulary(self, words: list[str]) -> None:
+        """Puts words first for the pieces still to come (read from the field after the start)."""
+        self._vocabulary = list(dict.fromkeys([*words, *self._vocabulary]))
     def _run(self) -> None:
         while not self._stop.wait(0.5):
             samples = self._recorder.snapshot(self._take, self.done)

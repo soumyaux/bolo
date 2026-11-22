@@ -940,6 +940,8 @@ class BoloApp(rumps.App):
                 return
             if field and field.value:
                 self._context = context_terms(field.value)
+                if self._early and self._context:
+                    self._early.add_vocabulary(self._context)
 
         threading.Thread(target=read, daemon=True, name="context").start()
 
