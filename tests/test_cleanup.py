@@ -33,3 +33,20 @@ def test_tidy_removes_fillers_and_repeats():
 def test_lost_words_are_found():
     assert _lost("restart Bolo now please", "restart now please") == ["Bolo"]
     assert _lost("first buy milk and then eggs", "1. Buy milk\n2. Eggs") == []
+
+
+def test_context_terms_keeps_names_and_identifiers_not_english():
+    from bolo.stt.base import context_terms
+
+    text = "Fix the DepartmentSelect dropdown in impact-ui. See useFillRows, major_class.py and MTP-152499. Ask Priya. The Button is fine."
+    terms = context_terms(text)
+    assert {"DepartmentSelect", "impact-ui", "useFillRows", "major_class.py", "MTP-152499", "Priya"} <= set(terms)
+    assert not {"Fix", "See", "Ask", "Button", "dropdown", "fine"} & set(terms)
+    assert terms[0] == "Priya"  # nearest the cursor first
+
+
+def test_context_terms_is_capped_and_empty_for_plain_text():
+    from bolo.stt.base import context_terms
+
+    assert context_terms("just some ordinary words here. And more.") == []
+    assert len(context_terms(" ".join(f"id{n}" for n in range(50)))) == 15

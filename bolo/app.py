@@ -42,7 +42,7 @@ from .learn.voice import Voice
 from .overlay import Overlay
 from .pending import Pending, Saved
 from .settings_window import SettingsWindow
-from .stt.base import BadResult, RateLimited, Unavailable, flac_seconds
+from .stt.base import BadResult, RateLimited, Unavailable, context_terms, flac_seconds
 from .stt.groq import GroqWhisper
 from .stt.local_whisper import LocalWhisper, ensure_model
 from .usage import Usage
@@ -306,6 +306,8 @@ class BoloApp(rumps.App):
         self.sounds = sounds.Sounds(cfg)
         # Where the start sound is in the clip being recorded: (first sample, samples to cut).
         self._beep = (0, 0)
+        # Names and identifiers from the field being typed into, read when the key goes down.
+        self._context: list[str] = []
         atexit.register(self._restore_sound)
         self._tap = None
         self._problem = self._check_setup()
@@ -786,6 +788,7 @@ class BoloApp(rumps.App):
                     rate = self.recorder.sample_rate
                     self._beep = (at, int((audible + _SPEAKER_SECONDS + _ECHO_SECONDS) * rate) if audible else 0)
                     self._early = self._start_early(sum(self._beep))
+                    self._read_context()
                     self._show(RECORDING)
                     self._pill("listening")
                     open_up_front_app(learning=self.watcher is not None)
@@ -922,6 +925,23 @@ class BoloApp(rumps.App):
             heard,
             start,
         )
+
+    def _read_context(self) -> None:
+        """Reads the focused field in the background: accessibility can take up to 0.5 s to answer.
+        Only distinctive words are kept, never the field's text, and they are never logged."""
+        self._context = []
+        if not self.cfg["stt"].get("field_context", True):
+            return
+
+        def read():
+            try:
+                field = ax.focused()
+            except Exception:
+                return
+            if field and field.value:
+                self._context = context_terms(field.value)
+
+        threading.Thread(target=read, daemon=True, name="context").start()
 
     def _stop_early(self) -> None:
         if self._early:
@@ -1064,7 +1084,10 @@ class BoloApp(rumps.App):
         terms = self.learning.terms(self.cfg["dictionary"]["terms"])
         raw, provider = ("", "local")
         if flac:
-            raw, provider = self.chain.transcribe(flac, terms + self.cfg["dictionary"].get("hints", []))
+            # Words from the field being typed into come first: they fit this dictation best.
+            context, self._context = self._context, []
+            vocabulary = list(dict.fromkeys(context + terms + self.cfg["dictionary"].get("hints", [])))
+            raw, provider = self.chain.transcribe(flac, vocabulary)
         raw = f"{before} {raw}".strip()
         heard = time.perf_counter() - start
         text = self.learning.apply(raw)

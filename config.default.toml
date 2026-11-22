@@ -60,6 +60,9 @@ keep_hours = 24
 order = ["groq", "local"]
 # Groq's time limit for a request, plus a little per second of audio.
 timeout_seconds = 4
+# Names and identifiers already in the field you dictate into (useFillRows, impact-ui, MTP-152499)
+# are given to the speech model so it spells them the same way. Only those words are sent, not the text.
+field_context = true
 
 [stt.groq]
 model = "whisper-large-v3"

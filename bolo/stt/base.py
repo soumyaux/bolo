@@ -90,3 +90,33 @@ def broken(text: str, prompt: str) -> str:
     if any(" " + " ".join(listed[i : i + 4]) + " " in said for i in range(len(listed) - 3)):
         return "repeats the glossary"
     return ""
+
+
+# A word worth spelling for Whisper: an identifier (camelCase, snake_case, dotted, with digits), an
+# acronym, or a capitalised name in mid-sentence.
+_TOKEN = re.compile(r"(?<![\w.])[A-Za-z][\w.-]*[\w]")
+_CONTEXT_CHARS = 3000
+_CONTEXT_TERMS = 15
+
+
+def context_terms(text: str) -> list[str]:
+    """Distinctive words from the text already in the field being typed into, nearest the end first,
+    so Whisper spells names and identifiers the way they are written there. Ordinary English words
+    are left out: they need no help and would use up Groq's 224-token prompt."""
+    from ..learn.diff import english
+
+    found: dict[str, None] = {}
+    tail = text[-_CONTEXT_CHARS:]
+    for match in reversed(list(_TOKEN.finditer(tail))):
+        word = match.group().rstrip(".-")
+        before = tail[: match.start()].rstrip()
+        sentence_start = not before or before[-1] in ".!?\n"
+        identifier = any(c in word for c in "_.") or any(c.isdigit() for c in word) or (
+            any(c.isupper() for c in word[1:])) or (
+            "-" in word and not all(english(part) for part in word.split("-")))
+        name = word[0].isupper() and not sentence_start and not english(word)
+        if len(word) >= 2 and (identifier or name) and word.lower() not in {w.lower() for w in found}:
+            found[word] = None
+            if len(found) == _CONTEXT_TERMS:
+                break
+    return list(found)
