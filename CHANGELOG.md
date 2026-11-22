@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+**After updating:** macOS asks you one last time to allow Bolo again (Microphone, Accessibility, Input Monitoring), because Bolo.app is now signed with its own certificate. After this, updates keep the permissions.
+
+- The installer creates a private "Bolo Local Signing" certificate in your login keychain (no admin password needed), so updates no longer reset macOS permissions.
+
 ## 1.0.0 (2026-11-22)
 
 Faster, types as you watch, and learns without making new mistakes.
