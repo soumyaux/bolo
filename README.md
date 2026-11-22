@@ -10,6 +10,13 @@
 </p>
 
 <p align="center">
+  <img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fbolo-count.soumyasahoo.in%2Fv1%2Fbadge%2Finstalls" alt="Installs">
+  <img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fbolo-count.soumyasahoo.in%2Fv1%2Fbadge%2Factive" alt="Active users in the last 30 days">
+  <a href="https://github.com/soumyaux/bolo/stargazers"><img src="https://img.shields.io/github/stars/soumyaux/bolo?color=2563eb" alt="GitHub stars"></a>
+  <a href="https://github.com/soumyaux/bolo/network/members"><img src="https://img.shields.io/github/forks/soumyaux/bolo?color=2563eb" alt="GitHub forks"></a>
+</p>
+
+<p align="center">
   <img src="docs/how-it-works.svg" alt="1. Hold fn. 2. Speak. 3. Let go, and clean text is typed." width="760">
 </p>
 
@@ -45,6 +52,7 @@ Then allow Bolo in **System Settings › Privacy & Security**, quit it from the 
 ## Good to know
 
 - 🔒 **Private.** Without a Groq key, your voice never leaves your Mac.
+- 📊 **User count.** Only if you say yes: one random ID once a day. No name, text or audio, and IP addresses are not stored. [How it's counted](docs/GUIDE.md#privacy).
 - 🔄 **Updates.** The **b** menu tells you when a new version is out. One click installs it.
 - 🗑 **Uninstall:** `curl -fsSL https://raw.githubusercontent.com/soumyaux/bolo/main/uninstall.sh | bash`
 

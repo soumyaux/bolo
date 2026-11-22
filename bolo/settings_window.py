@@ -252,6 +252,10 @@ class SettingsWindow:
         y -= _ROW + 26
         self._label(view, "Writing the text", y)
         self._animate = self._check(view, "Type it word by word into the text box", y)
+        y -= _ROW
+        self._live_preview = self._check(view, "Show faded words while I speak", y)
+        y -= _ROW
+        self._share_count = self._check(view, "Count me in Bolo's anonymous user numbers", y)
         y -= _ROW + 8
         self._label(view, "Speech runs on", y)
         self._mode = NSSegmentedControl.segmentedControlWithLabels_trackingMode_target_action_(
@@ -438,6 +442,8 @@ class SettingsWindow:
         self._show_key_state()
         self.show_mode()
         self._animate.setState_(get("typing", "animate", True))
+        self._live_preview.setState_(get("typing", "live_preview", True))
+        self._share_count.setState_(get("stats", "share_count", False))
         self._terms.setString_("\n".join(get("dictionary", "terms", [])))
         self._hints.setString_("\n".join(get("dictionary", "hints", [])))
         self._apps = [[key, style] for key, style in cfg.get("styles", {}).get("apps", {}).items()]
@@ -509,6 +515,8 @@ class SettingsWindow:
             ("stt", "groq", "language"): groq,
             ("stt", "order"): MODES[self._mode.selectedSegment()][0],
             ("typing", "animate"): bool(self._animate.state()),
+            ("typing", "live_preview"): bool(self._live_preview.state()),
+            ("stats", "share_count"): bool(self._share_count.state()),
             ("hotkey", "push_to_talk"): talk,
             ("audio", "hands_free"): bool(self._hands_free.state()),
             ("audio", "mute_while_recording"): bool(self._mute.state()),

@@ -41,11 +41,19 @@ error = "Basso"
 # Types the text into the text box word by word, so it appears as if written (under half a second).
 # Text with several lines and code editors get a paste instead.
 animate = true
+# While you speak, faded words show inside the text box and fade when the real text lands. They are only
+# a preview from the local model: nothing is typed, and the pasted text is made the usual way.
+live_preview = true
 
 [overlay]
 # While the cleanup model works, the island under the notch shows the words it is cleaning.
 # Turn off if you share your screen.
 show_words = true
+
+[stats]
+# Off unless you say yes. Sends one random ID at most once a day so Bolo can show how many people
+# use it. No name, no text, no audio, and IP addresses are not stored.
+share_count = false
 
 [recovery]
 # When a dictation cannot be transcribed, its audio is kept and tried again in the background.

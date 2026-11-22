@@ -138,6 +138,16 @@ else
 fi
 fi
 
+# Only asked at a real terminal, so nobody is counted without seeing the question.
+# Older releases cannot count, so they are not asked.
+if [ "$FIRST" = 1 ] && [ -r /dev/tty ] && grep -q count-me bolo/setup.py; then
+  echo
+  echo "Help show how many people use Bolo? This sends one random ID once a day."
+  echo "No name, text or audio, and IP addresses are not stored. Change it any time in Settings."
+  reply="$(ask "Count me in? [Y/n]")"
+  [[ "$reply" =~ ^[Nn] ]] || setup count-me || true
+fi
+
 # 8. Bolo.app.
 say "Building ~/Applications/Bolo.app"
 reply=n

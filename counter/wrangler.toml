@@ -1,0 +1,15 @@
+name = "bolo-counter"
+main = "worker.js"
+compatibility_date = "2026-11-01"
+workers_dev = true
+
+[observability]
+enabled = false
+
+[triggers]
+crons = ["17 3 * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "bolo-counter"
+database_id = "ea7aab74-9761-4da2-a7f5-d990d878c921"

@@ -29,9 +29,10 @@ from AppKit import (
 from ApplicationServices import AXIsProcessTrustedWithOptions, kAXTrustedCheckOptionPrompt
 from PyObjCTools import AppHelper
 
-from . import audio, config, inject, login, sounds, styles, updates
+from . import audio, config, inject, login, sounds, stats, styles, updates
 from .cleanup import Cleaner, prompt_prefix
 from .early import EarlyText, PrefixCheck
+from .ghost import Ghost, LiveText, locate
 from .keys import _MODIFIERS, parse_shortcut
 from .learn import Learning, ax
 from .learn.ax_watch import Watcher
@@ -128,6 +129,8 @@ class BoloApp(rumps.App):
             cfg["audio"]["sample_rate"], cfg["audio"]["max_seconds"], cfg["audio"].get("microphone", "")
         )
         self.chain = Chain(build_providers(cfg))
+        self.ghost = Ghost()
+        self._live: LiveText | None = None
         self._groq_key = config.key("GROQ_API_KEY")
         self.cleaner = Cleaner(cfg, self._cleanup_status)
         learning = cfg["learning"]
@@ -202,6 +205,7 @@ class BoloApp(rumps.App):
         self._update_timer.start()
 
     def _check_update(self, told: bool = False) -> None:
+        stats.daily(self.cfg)
         """Worker thread. told=True when the user asked, so the answer is shown either way."""
         installed = updates.current()
         try:
@@ -489,6 +493,7 @@ class BoloApp(rumps.App):
         self.cfg = cfg
         self.cleaner = Cleaner(cfg, self._cleanup_status)
         threading.Thread(target=self._check_cleanup, daemon=True).start()
+        threading.Thread(target=stats.daily, args=(cfg,), daemon=True).start()
         self.sounds.update(cfg)
         self.overlay.show_words = cfg.get("overlay", {}).get("show_words", True)
         learning = cfg["learning"]
@@ -659,6 +664,7 @@ class BoloApp(rumps.App):
         while True:
             command = self._commands.get()
             self._busy = (command, time.monotonic())
+            handed_over = False
             try:
                 if command == "down":
                     # Record first so no word is lost, then the start sound, then silence the speakers.
@@ -669,6 +675,7 @@ class BoloApp(rumps.App):
                     rate = self.recorder.sample_rate
                     self._beep = (at, int((audible + _SPEAKER_SECONDS + _ECHO_SECONDS) * rate) if audible else 0)
                     self._early = self._start_early(sum(self._beep))
+                    self._start_live(sum(self._beep))
                     self._read_context()
                     self._show(RECORDING)
                     self._pill("listening")
@@ -711,6 +718,7 @@ class BoloApp(rumps.App):
                     self._show(IDLE)
                     self._pill("message", "Cancelled", 1.2, "cancel")
                 elif command == "up":
+                    self._stop_live()
                     if not self.recorder.recording:
                         # The microphone never opened; its error is already showing.
                         log.info("dropped: the microphone never opened")
@@ -746,6 +754,7 @@ class BoloApp(rumps.App):
                         self._show(IDLE, "Too quiet: nothing heard")
                         self._pill("message", "Too quiet: nothing heard. Is the right mic on?", 2.5, "warn")
                         continue
+                    handed_over = True
                     threading.Thread(
                         target=self._dictate,
                         args=(clip, self._prompt_key_used, early, recording, place),
@@ -770,6 +779,8 @@ class BoloApp(rumps.App):
                         log.exception("sound not restored")
             finally:
                 self._busy = None
+                if command in ("up", "tap", "cancel") and not handed_over:
+                    AppHelper.callAfter(self.ghost.end)
 
     def _start_early(self, start: int) -> EarlyText | None:
         """Starts turning speech into text during the recording. Pieces go through the chain, so
@@ -826,7 +837,33 @@ class BoloApp(rumps.App):
 
         threading.Thread(target=read, daemon=True, name="context").start()
 
+    def _start_live(self, start: int) -> None:
+        """Faded words at the cursor while speaking, heard by the local model only: Groq bills
+        every request as 10 s. They are a preview and never become the pasted text."""
+        self._stop_live()
+        self.ghost.was_shown = False
+        local = next((p for p in self.chain.providers if isinstance(p, LocalWhisper)), None)
+        if local is None or not self.cfg.get("typing", {}).get("live_preview", True):
+            return
+        if not self.cfg.get("overlay", {}).get("show_words", True):
+            return
+        local.warm()
+        vocabulary = self.learning.terms(self.cfg["dictionary"]["terms"]) + self.cfg["dictionary"].get("hints", [])
+
+        def show(text: str) -> None:
+            spot, room = locate()
+            AppHelper.callAfter(self.ghost.update, text, spot, room)
+
+        AppHelper.callAfter(self.ghost.begin)
+        self._live = LiveText(self.recorder, lambda flac: local.transcribe(flac, vocabulary), start, show)
+
+    def _stop_live(self) -> None:
+        if self._live:
+            self._live.stop()
+            self._live = None
+
     def _stop_early(self) -> None:
+        self._stop_live()
         if self._early:
             self._early.stop()
             self._early = None
@@ -843,6 +880,7 @@ class BoloApp(rumps.App):
                 self._write(clip, prompt_key, early, recording, place)
             finally:
                 self._writing = False
+                AppHelper.callAfter(self.ghost.end)
 
     def _write(
         self, clip, prompt_key: bool = False, early: EarlyText | None = None, recording=None, place=None
@@ -897,12 +935,14 @@ class BoloApp(rumps.App):
             self._show(IDLE, f"You switched windows: {self._paste_label()} to paste")
             self._pill("message", f"You switched windows. Press {self._paste_label()} to paste it here.", 4, "warn")
             return
+        AppHelper.callAfter(self.ghost.end)
         # With no text box to take it, the text goes on the clipboard and the island says so.
         typing, where = ax.typing_target()
+        box = ax.focused() if typing is not False else None
         try:
             if typing is False:
                 inject.copy(text)
-            elif self._animate(text, target.style):
+            elif self._animate(text, target.style) and not self.ghost.was_shown:
                 inject.type_text(text)
             else:
                 inject.paste(text)
@@ -913,6 +953,14 @@ class BoloApp(rumps.App):
             self.sounds.play("error")
             self._show(WARN, "Could not paste: text saved")
             self._pill("message", f"Couldn't paste. Text saved: press {self._paste_label()} to paste it.", 4, "error")
+            return
+        # The paste is only a key press, so a box that did not change may not have received it.
+        if box is not None and not ax.changed(box):
+            log.warning("text box did not change after writing into %s, text saved", where)
+            self.pending.add_text(text, raw, app)
+            AppHelper.callAfter(self._refresh_saved)
+            self._show(IDLE, f"Text saved: {self._paste_label()} to paste")
+            self._pill("message", f"Didn't see it land? Press {self._paste_label()} to paste it.", 4, "warn")
             return
         dictation_id = self.learning.record(app, raw, text, "prompt" if route == "prompt" else "")
         # A prompt is laid out unlike what was said, so it cannot teach the speech model.

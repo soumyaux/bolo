@@ -106,7 +106,8 @@ It asks before deleting your settings and saved words. Ollama is left installed,
 - **Without a Groq key**, your voice never leaves your Mac.
 - **With a Groq key**, the audio is sent to [Groq](https://groq.com/privacy-policy/) to be turned into text. Nothing else is sent.
 - Text cleanup always runs on your Mac.
-- No accounts, no tracking, no analytics.
+- No accounts and no ads. Bolo never collects what you say or type.
+- **User count, only if you say yes.** The installer asks, and Settings › Speech can turn it off. Bolo then sends one random ID at most once a day. The counter stores a scrambled version of that ID and the day, with no name, IP address, text or audio. **Installs** counts different IDs ever seen. **Active users** counts different IDs seen in the last 30 days. People who say no are not counted, so the real numbers can be higher. The counter's code is in [`counter/`](../counter/worker.js).
 - Every few hours Bolo asks GitHub for the list of Bolo versions, to offer updates. That request carries nothing about you or what you said.
 - What Bolo keeps stays on your Mac in `~/Library/Application Support/Bolo/`, readable only by your user account: your settings, the text of your last 200 dictations (so you can fix them and Bolo can learn), and the audio of failed dictations for up to 24 hours. The full list is in [docs/HOW-IT-WORKS.md](HOW-IT-WORKS.md).
 

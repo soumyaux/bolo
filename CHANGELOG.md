@@ -6,6 +6,9 @@
 
 - The installer creates a private "Bolo Local Signing" certificate in your login keychain (no admin password needed), so updates no longer reset macOS permissions.
 - Settings › Speech has one Local / AI switch. For AI, get a free Groq key, paste it, and test it right there, with no file to edit or restart.
+- Faded live words inside the text box while you speak. They are only a preview, and the accurate text replaces them when you let go.
+- If a paste may have missed the text box, Bolo keeps the text for ⌃⌥V.
+- Optional anonymous user count. It is off unless you say yes.
 - The installer shows download sizes, makes AI cleanup optional, and suggests skipping it on 8 GB Macs or when disk space is low. A failed cleanup download no longer stops the install.
 
 ## 1.0.0 (2026-11-22)

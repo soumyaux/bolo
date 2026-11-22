@@ -5,6 +5,7 @@ asked them to expose their text. It fails in terminals and some web editors, so 
 returns None or False instead of raising. Password fields are never read.
 """
 
+import time
 from typing import NamedTuple
 
 from AppKit import NSWorkspace
@@ -199,6 +200,17 @@ def page(pid: int) -> tuple[str, str]:
 def value(element) -> str | None:
     text = _get(element, "AXValue")
     return str(text) if isinstance(text, str) else None
+
+
+def changed(field: Field, seconds: float = 0.8) -> bool:
+    """True once the field's text differs from when it was read. Apps can take a moment to update."""
+    end = time.monotonic() + seconds
+    while True:
+        if value(field.element) != field.value:
+            return True
+        if time.monotonic() >= end:
+            return False
+        time.sleep(0.05)
 
 
 def _utf16(text: str) -> int:
