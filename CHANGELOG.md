@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.1 (2026-11-23)
 
 - Anonymous analytics now sends the new word-count number about once an hour instead of once a day. Still never your words, audio, name or any ID.
 
