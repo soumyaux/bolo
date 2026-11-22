@@ -19,6 +19,9 @@ _EXAMPLES = 5
 _ODD = re.compile(r"[^\w\s.'@&+#/-]|\b[A-Z]+[a-z]\b|\b[a-z]+[A-Z]\w*|\b\w*[a-z][A-Z]\b")
 
 
+_UNPRINTABLE = re.compile(r"[\ue000-\uf8ff\x00-\x08\x0b-\x1f\x7f]")
+
+
 def _junk(intended: str) -> bool:
     return bool(_ODD.search(intended))
 
@@ -90,6 +93,8 @@ class Learning:
     def learn(self, dictation_id: int, before: str, after: str) -> list[diff.Swap]:
         """Saves a correction and returns the word swaps taken from it."""
         row = self.store.dictation(dictation_id) if self.store else None
+        # Editor icons and control characters read from some fields ("\ueb15") are not text.
+        after = _UNPRINTABLE.sub("", after)
         if row is None or before == after:
             return []
         self.store.set_corrected(dictation_id, after)

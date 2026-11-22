@@ -64,6 +64,12 @@ def raise_for_status(name: str, response: httpx.Response) -> None:
 
 
 _WORD = re.compile(r"\w+")
+# What Whisper writes when it hears near silence: lines from the videos it was trained on.
+_STOCK_PHRASE = re.compile(
+    r"(?:and )?(?:this is the end of (?:this|the) video|thanks? (?:you )?for watching|please subscribe"
+    r"|subtitles by|transcribed by|see you (?:in the )?next video)\W*",
+    re.IGNORECASE,
+)
 
 
 def broken(text: str, prompt: str) -> str:
@@ -71,6 +77,8 @@ def broken(text: str, prompt: str) -> str:
     words = _WORD.findall(text.lower())
     if not words:
         return ""
+    if _STOCK_PHRASE.fullmatch(text.strip()):
+        return "is a stock phrase"
     # Whisper stuck in a loop: "1 1 1 1 1" or the same phrase over and over.
     if len(text) >= 40 and len(text) / len(zlib.compress(text.encode())) > 2.4:
         return "repeats itself"

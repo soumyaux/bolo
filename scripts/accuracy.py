@@ -4,8 +4,10 @@ Each saved clip is labelled with the text you kept: your correction, or else wha
 Every fifth clip is held out from voice training, and by default only those are scored, so a
 trained model is never tested on what it learned from.
 
-Run: uv run scripts/accuracy.py           (held-out clips)
-     uv run scripts/accuracy.py --all     (every saved clip)
+Run: uv run scripts/accuracy.py                 (held-out clips)
+     uv run scripts/accuracy.py --all           (every saved clip)
+     uv run scripts/accuracy.py --all --fixed   (only clips you corrected: the fairest score, since an
+                                                 uncorrected label is just what one model pasted)
 """
 
 import statistics
@@ -92,6 +94,8 @@ def main() -> None:
     voice = Voice(learning.store, keep_days=cfg["learning"].get("voice_keep_days", 14))
     voice.prune()
     rows = [row for row in learning.store.with_audio() if "--all" in sys.argv or held_out(row)]
+    if "--fixed" in sys.argv:
+        rows = [row for row in rows if row["corrected"]]
     if not rows:
         sys.exit(f"No saved clips to score yet ({voice.line()}). Dictate with save_voice = true first.")
     minutes = sum(row["audio_seconds"] for row in rows) / 60

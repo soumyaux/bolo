@@ -38,3 +38,12 @@ def test_budget_uses_groqs_own_count():
     budget = Budget()
     budget.spend(1, {"x-ratelimit-limit-requests": "2000", "x-ratelimit-remaining-requests": "200"})
     assert budget.day_share() >= 1800 / 2000
+
+
+def test_stock_phrase_is_broken():
+    from bolo.stt.base import broken
+
+    assert broken("And this is the end of this video.", "") == "is a stock phrase"
+    assert broken("Thanks for watching!", "") == "is a stock phrase"
+    assert broken("This is the end of the video I sent you, check it.", "") == ""
+    assert broken("Thank you.", "") == ""

@@ -76,7 +76,7 @@ class Store:
     def with_audio(self) -> list[sqlite3.Row]:
         """Dictations whose audio is kept, oldest first. The label is corrected, else pasted."""
         return self._run(
-            "SELECT id, time, app, audio, audio_seconds, COALESCE(corrected, pasted) AS label "
+            "SELECT id, time, app, audio, audio_seconds, corrected, COALESCE(NULLIF(corrected, ''), pasted) AS label "
             "FROM dictations WHERE audio IS NOT NULL ORDER BY id"
         )
 
