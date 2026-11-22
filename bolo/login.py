@@ -42,6 +42,36 @@ def _signing_identity() -> str:
     return _CERTIFICATE if f'"{_CERTIFICATE}"' in found.stdout else "-"
 
 
+def ensure_certificate() -> bool:
+    """Creates the self-signed signing certificate in the login keychain when it is missing.
+    It stays untrusted, which codesign accepts, so no admin password is needed. True if present."""
+    if _signing_identity() == _CERTIFICATE:
+        return True
+    with tempfile.TemporaryDirectory() as tmp:
+        key, cert, p12 = (str(Path(tmp) / n) for n in ("key.pem", "cert.pem", "cert.p12"))
+        password = hashlib.sha256(tmp.encode()).hexdigest()[:24]
+        config = Path(tmp) / "openssl.cnf"
+        config.write_text(
+            "[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n"
+            f"[dn]\nCN={_CERTIFICATE}\n"
+            "[ext]\nbasicConstraints=critical,CA:false\nkeyUsage=critical,digitalSignature\n"
+            "extendedKeyUsage=critical,codeSigning\n"
+        )
+        steps = [
+            ["/usr/bin/openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "3650",
+             "-keyout", key, "-out", cert, "-config", str(config)],
+            ["/usr/bin/openssl", "pkcs12", "-export", "-inkey", key, "-in", cert, "-out", p12,
+             "-name", _CERTIFICATE, "-passout", f"pass:{password}"],
+            # -T lets codesign use the key without asking each time.
+            ["security", "import", p12, "-P", password, "-T", "/usr/bin/codesign"],
+        ]
+        for step in steps:
+            if subprocess.run(step, capture_output=True).returncode != 0:
+                print(f"Could not create the signing certificate ({step[0]} failed); signing ad hoc.")
+                return False
+    return _signing_identity() == _CERTIFICATE
+
+
 def install_app() -> Path:
     """Builds the launcher app. Leaves it untouched when already up to date, because macOS ties the
     granted permissions to the exact files and a rebuild can make it forget them."""
@@ -97,6 +127,7 @@ def set_start_at_login(on: bool) -> None:
 
 
 if __name__ == "__main__":
+    ensure_certificate()
     print(install_app())
     if "--at-login" in sys.argv[1:]:
         set_start_at_login(True)
