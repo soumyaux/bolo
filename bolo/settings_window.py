@@ -17,14 +17,16 @@ from AppKit import (
     NSPanel,
     NSPopUpButton,
     NSScrollView,
+    NSSegmentedControl,
     NSSlider,
     NSSound,
-    NSTabView,
-    NSTabViewItem,
     NSTextField,
     NSTextView,
     NSView,
     NSViewWidthSizable,
+    NSVisualEffectView,
+    NSWindowStyleMaskClosable,
+    NSWindowStyleMaskFullSizeContentView,
     NSWindowStyleMaskNonactivatingPanel,
     NSWindowStyleMaskTitled,
     NSWorkspace,
@@ -35,7 +37,7 @@ from . import audio, config, sounds
 from .learn.fix_window import _install_edit_menu
 from .styles import STYLES
 
-_WIDTH, _HEIGHT, _MARGIN = 600, 560, 20
+_WIDTH, _HEIGHT, _MARGIN = 620, 610, 20
 _LABEL = 200  # width of the labels on the left
 _ROW = 30
 # Talk keys, as in app._KEYS, with the names shown in the window.
@@ -62,6 +64,18 @@ def running_apps() -> list[tuple[str, str]]:
         if app.activationPolicy() == NSApplicationActivationPolicyRegular and app.bundleIdentifier():
             apps[app.bundleIdentifier()] = app.localizedName() or app.bundleIdentifier()
     return sorted(((name, bundle) for bundle, name in apps.items()), key=lambda a: a[0].lower())
+
+
+def _has_class(name: str) -> bool:
+    try:
+        objc.lookUpClass(name)
+        return True
+    except objc.nosuchclass_error:
+        return False
+
+
+class _Flipless(NSView):
+    """The window's content, laid out from the bottom up as AppKit does by default."""
 
 
 class _Flipped(NSView):
@@ -94,6 +108,12 @@ class _Actions(NSObject):
     def addTyped_(self, sender):
         self.window.add_typed()
 
+    def section_(self, sender):
+        self.window.select(sender.selectedSegment())
+
+    def restart_(self, sender):
+        self.window.restart()
+
     def soundChosen_(self, sender):
         self.window.preview(sender)
 
@@ -102,8 +122,9 @@ class SettingsWindow:
     """Call show(cfg) on the main thread. on_save(changes) gets {("section", "key"): value}; it raises
     ValueError with a message for the window when the changes cannot be saved."""
 
-    def __init__(self, on_save: Callable[[dict], None]):
+    def __init__(self, on_save: Callable[[dict], None], on_restart: Callable[[], None] | None = None):
         self._on_save = on_save
+        self._on_restart = on_restart
         self._panel = None
         self._cfg: dict = {}
         self._apps: list[list[str]] = []  # [key, style]
@@ -258,6 +279,19 @@ class SettingsWindow:
         y -= _ROW
         self._in_prompt_apps = self._check(view, "Always in apps with the “prompt” style", y)
 
+    def _background(self, frame):
+        """Liquid Glass on macOS 26, the frosted sidebar material before it."""
+        glass = objc.lookUpClass("NSGlassEffectView") if _has_class("NSGlassEffectView") else None
+        if glass is not None:
+            view = glass.alloc().initWithFrame_(frame)
+            view.setCornerRadius_(0)
+            return view
+        view = NSVisualEffectView.alloc().initWithFrame_(frame)
+        view.setMaterial_(7)  # sidebar
+        view.setBlendingMode_(0)  # behind the window
+        view.setState_(1)  # always active
+        return view
+
     def _build(self) -> None:
         _install_edit_menu()
         self._actions = _Actions.alloc().initWithWindow_(self)
@@ -265,32 +299,67 @@ class SettingsWindow:
         # panel takes the keyboard while the other app stays in front (see fix_window.py).
         self._panel = NSPanel.alloc().initWithContentRect_styleMask_backing_defer_(
             NSMakeRect(0, 0, _WIDTH, _HEIGHT),
-            NSWindowStyleMaskTitled | NSWindowStyleMaskNonactivatingPanel,
+            NSWindowStyleMaskTitled
+            | NSWindowStyleMaskClosable
+            | NSWindowStyleMaskFullSizeContentView
+            | NSWindowStyleMaskNonactivatingPanel,
             NSBackingStoreBuffered,
             False,
         )
         self._panel.setTitle_("Bolo Settings")
+        self._panel.setTitlebarAppearsTransparent_(True)
+        self._panel.setTitleVisibility_(1)  # hidden: the section switcher says where you are
+        self._panel.setMovableByWindowBackground_(True)
+        self._panel.setOpaque_(False)
+        self._panel.setBackgroundColor_(NSColor.clearColor())
         self._panel.setFloatingPanel_(True)
         self._panel.setBecomesKeyOnlyIfNeeded_(False)
         self._panel.setHidesOnDeactivate_(False)
         self._panel.setReleasedWhenClosed_(False)
-        content = self._panel.contentView()
-        tabs = NSTabView.alloc().initWithFrame_(NSMakeRect(12, 52, _WIDTH - 24, _HEIGHT - 60))
-        for title, fill in (("General", self._general), ("Speech", self._speech), ("Dictionary", self._dictionary), ("Apps and prompts", self._apps_tab)):
-            item = NSTabViewItem.alloc().initWithIdentifier_(title)
-            item.setLabel_(title)
-            tabs.addTabViewItem_(item)
-            fill(item.view(), tabs.contentRect().size.height)
-        content.addSubview_(tabs)
-        self._tabs = tabs
+        background = self._background(NSMakeRect(0, 0, _WIDTH, _HEIGHT))
+        content = _Flipless.alloc().initWithFrame_(NSMakeRect(0, 0, _WIDTH, _HEIGHT))
+        if hasattr(background, "setContentView_"):
+            background.setContentView_(content)
+        else:
+            background.addSubview_(content)
+        self._panel.setContentView_(background)
+
+        sections = (("General", self._general), ("Speech", self._speech), ("Dictionary", self._dictionary),
+                    ("Apps and prompts", self._apps_tab))
+        switcher = NSSegmentedControl.segmentedControlWithLabels_trackingMode_target_action_(
+            [title for title, _ in sections], 0, self._actions, "section:"
+        )
+        switcher.sizeToFit()
+        width = switcher.frame().size.width
+        switcher.setFrameOrigin_(((_WIDTH - width) / 2, _HEIGHT - 44))
+        content.addSubview_(switcher)
+        self._switcher = switcher
+        # The sections sit on a rounded card, as in System Settings.
+        card_frame = NSMakeRect(16, 56, _WIDTH - 32, _HEIGHT - 112)
+        self._pages = []
+        for _, fill in sections:
+            page = NSView.alloc().initWithFrame_(card_frame)
+            page.setWantsLayer_(True)
+            page.layer().setCornerRadius_(14)
+            page.layer().setBackgroundColor_(NSColor.controlBackgroundColor().colorWithAlphaComponent_(0.55).CGColor())
+            fill(page, card_frame.size.height)
+            content.addSubview_(page)
+            self._pages.append(page)
         self._message = NSTextField.wrappingLabelWithString_("")
-        self._message.setFrame_(NSMakeRect(_MARGIN, 10, _WIDTH - 2 * _MARGIN - 220, 34))
+        self._message.setFrame_(NSMakeRect(_MARGIN + 130, 10, _WIDTH - 2 * _MARGIN - 350, 34))
         self._message.setFont_(NSFont.systemFontOfSize_(11))
         content.addSubview_(self._message)
+        self._button(content, "Restart Bolo", "restart:", NSMakeRect(_MARGIN - 4, 12, 124, 32))
         save = self._button(content, "Save", "save:", NSMakeRect(_WIDTH - _MARGIN - 96, 12, 96, 32), "\r")
         # Return adds a line in the text boxes, so saving is Cmd+Return.
         save.setKeyEquivalentModifierMask_(NSEventModifierFlagCommand)
+        save.setBezelColor_(NSColor.controlAccentColor())
         self._button(content, "Cancel", "cancel:", NSMakeRect(_WIDTH - _MARGIN - 200, 12, 96, 32), "\x1b")
+
+    def select(self, index: int) -> None:
+        for i, page in enumerate(self._pages):
+            page.setHidden_(i != index)
+        self._switcher.setSelectedSegment_(index)
 
     # Filling in and reading back
 
@@ -459,6 +528,11 @@ class SettingsWindow:
         self._message.setStringValue_("")
         self._panel.orderOut_(None)
 
+    def restart(self) -> None:
+        self._panel.orderOut_(None)
+        if self._on_restart:
+            self._on_restart()
+
     def close(self) -> None:
         self._panel.orderOut_(None)
 
@@ -468,7 +542,7 @@ class SettingsWindow:
         if not self._panel.isVisible():
             self._cfg = cfg
             self._fill(cfg)
-            self._tabs.selectTabViewItemAtIndex_(0)
+            self.select(0)
             self._panel.center()
         self._panel.orderFrontRegardless()
         self._panel.makeKeyWindow()

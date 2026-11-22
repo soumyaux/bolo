@@ -9,7 +9,8 @@ _EDGE = ".,!?;:\"'()[]{}"
 # A mis-hearing is short on both sides; anything longer is the user rewording.
 _MAX_WORDS = 3
 # Above this share of reworded words the sentence was rewritten, and nothing is learned from it.
-_REWRITE_SHARE = 0.3
+# Half, so fixing several words in one go still teaches each of them.
+_REWRITE_SHARE = 0.5
 _NAME = re.compile(r"[A-Z0-9_./-]")
 # Ordinary English words, to tell a real word from a typo or a mis-hearing.
 _ENGLISH_WORDS = Path("/usr/share/dict/words")
@@ -24,7 +25,17 @@ def english(word: str) -> bool:
             _english = set(_ENGLISH_WORDS.read_text().lower().split())
         except OSError:
             _english = set()
-    return word.lower() in _english
+    word = word.lower()
+    if word in _english:
+        return True
+    # The list has no past tenses or plurals: "pooled", "updated", "multiplied", "boxes".
+    for ending, back in (("ied", "y"), ("ies", "y"), ("ed", ""), ("ed", "e"), ("ing", ""), ("ing", "e"),
+                         ("es", ""), ("s", ""), ("ability", "able"), ("er", ""), ("ly", "")):
+        if word.endswith(ending) and len(word) - len(ending) >= 3:
+            stem = word[: -len(ending)] + back
+            if stem in _english or (ending in ("ed", "ing") and stem[-1:] == stem[-2:-1] and stem[:-1] in _english):
+                return True
+    return False
 
 
 class Swap(NamedTuple):

@@ -9,6 +9,7 @@ import logging
 import logging.handlers
 import os
 import queue
+import subprocess
 import sys
 import threading
 import time
@@ -262,7 +263,7 @@ class BoloApp(rumps.App):
             self.voice.prune()
         self.voice_line.hidden = self.voice is None
         self.fix_window = FixWindow(self._fix_saved)
-        self.settings_window = SettingsWindow(self._save_settings)
+        self.settings_window = SettingsWindow(self._save_settings, self._restart)
         self.watcher = Watcher(self._learn) if learning["enabled"] and learning["auto_capture"] else None
         self.pending = Pending(LEARNING_DB.parent / "pending", cfg["recovery"]["keep_hours"])
         # Shortcut (key code, modifiers) -> what it does. Both run on the main thread.
@@ -552,6 +553,19 @@ class BoloApp(rumps.App):
         if item.state:
             # The login copy runs as its own app and needs the permissions granted to it once.
             self.status.title = f"Open {login.NAME} from Applications once and allow access"
+
+    def _restart(self) -> None:
+        """Quits and opens Bolo again a moment later, once this copy has let go of its lock."""
+        app = login.APP if login.APP.exists() else None
+        if app is None:
+            self._pill("message", "Restart works for the installed Bolo.app only", 3, "warn")
+            return
+        log.info("restarting")
+        subprocess.Popen(
+            ["/bin/sh", "-c", f'sleep 1.5; open "{app}"'], start_new_session=True,
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        rumps.quit_application()
 
     def _animate(self, text: str, style: str) -> bool:
         """True to type the text word by word instead of pasting it at once. Code editors ("prompt"

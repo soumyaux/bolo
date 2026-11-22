@@ -23,6 +23,8 @@ APP = Path.home() / "Applications" / f"{NAME}.app"
 LOG = Path.home() / "Library/Logs/Bolo.log"
 _AGENT = Path.home() / "Library/LaunchAgents" / f"{_ID}.plist"
 _SOURCE = Path(__file__).with_name("launcher.c")
+# The app's own icon, so Finder, the Dock and the quit animation show it even when Bolo is not running.
+_ICON = ROOT / "assets" / "Bolo.icns"
 # A code signing certificate in the login keychain. Signed with it, the app keeps its permissions
 # when it is rebuilt; signed without one, every rebuild needs them granted again.
 _CERTIFICATE = "Bolo Local Signing"
@@ -31,7 +33,7 @@ _BUILT_FROM = "BoloLauncherBuild"
 
 
 def _build_id() -> str:
-    return hashlib.sha256(f"{_SOURCE.read_bytes()!r}{ROOT}{LOG}{_signing_identity()}".encode()).hexdigest()[:16]
+    return hashlib.sha256(f"{_SOURCE.read_bytes()!r}{_ICON.read_bytes()!r}{ROOT}{LOG}{_signing_identity()}".encode()).hexdigest()[:16]
 
 
 def _signing_identity() -> str:
@@ -58,12 +60,15 @@ def install_app() -> Path:
             "CFBundleIdentifier": _ID,
             "CFBundleExecutable": "launcher",
             "CFBundlePackageType": "APPL",
+            "CFBundleIconFile": "Bolo",
             "CFBundleVersion": "1",
             # Menu bar only: no Dock icon.
             "LSUIElement": True,
             "NSMicrophoneUsageDescription": "Records your voice while you hold the dictation key.",
             _BUILT_FROM: build_id,
         }
+        (app / "Contents/Resources").mkdir()
+        shutil.copy(_ICON, app / "Contents/Resources/Bolo.icns")
         (app / "Contents/Info.plist").write_bytes(plistlib.dumps(info))
         subprocess.run(
             ["cc", "-O2", f'-DROOT="{ROOT}"', f'-DLOG="{LOG}"', "-o", str(app / "Contents/MacOS/launcher"), str(_SOURCE)],

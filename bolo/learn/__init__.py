@@ -15,17 +15,43 @@ log = logging.getLogger(__name__)
 _EXAMPLES = 5
 
 
+# A typo made while editing: a stray symbol, or capitals in odd places ("PilL", "IDv", "reName").
+_ODD = re.compile(r"[^\w\s.'@&+#/-]|\b[A-Z]+[a-z]\b|\b[a-z]+[A-Z]\w*|\b\w*[a-z][A-Z]\b")
+
+
+def _junk(intended: str) -> bool:
+    return bool(_ODD.search(intended))
+
+
+def usable(heard: str, intended: str) -> bool:
+    """True when a learned swap may be applied to every dictation. An ordinary word ("then",
+    "mode", "test") is right in some sentences and wrong in others, so it is never replaced
+    everywhere; the cleanup pass learns those from examples instead. Nor are numbers or typos."""
+    words = re.findall(r"[\w']+", heard)
+    if not words or all(w.isdigit() for w in words) or _junk(intended):
+        return False
+    if heard.lower() == intended.lower():
+        # Only the capitals change ("github" to "GitHub"): safe for a name.
+        return any(c.isupper() for c in intended)
+    return not all(diff.english(w) for w in words)
+
+
 class Learning:
     def __init__(self, enabled: bool = True, path: Path = PATH):
         self.store = Store(path) if enabled else None
 
     def _active(self) -> list:
-        """Learned words in use: switched on, and either a name, a sound-alike or seen twice."""
+        """Learned words in use: switched on, seen twice (or trusted), and safe to use everywhere."""
         if self.store is None:
             return []
+        rows = [row for row in self.store.vocabulary() if row["enabled"]]
+        counts = {(row["heard"].lower(), row["intended"].lower()): row["count"] for row in rows}
         best = {}
-        for row in self.store.vocabulary():
-            if row["enabled"] and row["count"] >= 2:
+        for row in rows:
+            # Undone as often as it was made ("mode" to "more", then "more" back to "mode"): it
+            # depends on the sentence, so it is not a rule.
+            undone = counts.get((row["intended"].lower(), row["heard"].lower()), 0)
+            if row["count"] >= 2 and undone * 2 < row["count"] and usable(row["heard"], row["intended"]):
                 # Rows come strongest first, so one heard word maps to its most confirmed spelling.
                 best.setdefault(row["heard"], row)
         return list(best.values())
@@ -67,7 +93,7 @@ class Learning:
         if row is None or before == after:
             return []
         self.store.set_corrected(dictation_id, after)
-        found = diff.swaps(before, after)
+        found = [swap for swap in diff.swaps(before, after) if not _junk(swap.intended)]
         for swap in found:
             # A trusted swap counts as seen twice, so it is used from the next dictation on.
             self.store.see_swap(swap.heard, swap.intended, 2 if swap.trusted else 1)
