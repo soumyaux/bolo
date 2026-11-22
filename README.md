@@ -29,7 +29,26 @@ Press Return to accept each suggested answer. A Groq key is optional: skip it to
 
 Then allow Bolo in **System Settings › Privacy & Security**, quit it from the **b** menu, and open it again.
 
-**You need:** a Mac with Apple Silicon (M1 or newer), macOS 13 or newer, and 4 GB of free space.
+**You need:**
+
+- A Mac with Apple Silicon (M1 or newer). Intel Macs are not supported.
+- macOS 13 or newer.
+- About 2 GB of free space, or 5 GB with the optional AI cleanup.
+- 8 GB of memory works. The installer suggests skipping AI cleanup on these Macs, and dictation works without it.
+
+## Local or Groq
+
+Bolo is free either way. Local is the default if you skip the key.
+
+| | Local | Groq (your own free key) |
+| --- | --- | --- |
+| Where speech is processed | On your Mac | Sent to Groq |
+| Works offline | Yes | Falls back to Local |
+| Typical wait after speaking | 0.8 s | 0.4 s |
+| Word error rate | 21.2% | 20.6% |
+| Limits | None | Groq's free daily limit, then Local |
+
+Measured on 17 real dictations by one speaker, on one Mac, so treat the numbers as a rough guide. The accuracy difference is too small to matter.
 
 ## Use
 

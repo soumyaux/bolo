@@ -19,7 +19,8 @@ You need:
 
 - A Mac with **Apple Silicon** (M1, M2, M3, M4 or newer). Intel Macs are not supported.
 - **macOS 13 Ventura** or newer.
-- About **4 GB** of free disk space.
+- About **2 GB** of free disk space, or **5 GB** with the optional AI cleanup.
+- **8 GB of memory** works. The installer suggests skipping AI cleanup on these Macs.
 - 5 to 10 minutes. Most of it is download time.
 
 To check your Mac, open the Apple menu  › **About This Mac**. "Chip" should say Apple M-something.
@@ -38,9 +39,9 @@ curl -fsSL https://raw.githubusercontent.com/soumyaux/bolo/main/install.sh | bas
 
 | Question | What to choose |
 | --- | --- |
-| Install Ollama for text cleanup? | **Yes.** It's what makes the text tidy. |
+| Add AI cleanup? | **Yes** if you have more than 8 GB of memory. It tidies punctuation, lists and styles. Dictation works without it. |
 | Which cleanup model? | **1** is the best. Pick **2** if you use Bolo for commercial work (license note below). |
-| Groq API key | Optional. Paste a free key from [console.groq.com/keys](https://console.groq.com/keys) for faster, more accurate results, or just press Return to stay 100% offline. |
+| Groq API key | Optional. Paste a free key from [console.groq.com/keys](https://console.groq.com/keys) for faster results, or just press Return to stay 100% offline. |
 | Start Bolo when you log in? | **Yes**, unless you'd rather open it yourself. |
 
 The installer downloads everything Bolo needs, so you don't need Python or anything else installed first. It builds **Bolo.app** in your `Applications` folder and opens it. A **b** icon appears in the menu bar.
