@@ -47,3 +47,21 @@ def test_stock_phrase_is_broken():
     assert broken("Thanks for watching!", "") == "is a stock phrase"
     assert broken("This is the end of the video I sent you, check it.", "") == ""
     assert broken("Thank you.", "") == ""
+
+
+def test_key_problem_reads_groqs_answer(monkeypatch):
+    import httpx
+
+    from bolo.stt import groq
+
+    assert "look like" in groq.key_problem("bad key\n#x")
+    for status, expected in ((200, ""), (429, ""), (401, "did not accept"), (500, "error")):
+        monkeypatch.setattr(groq.httpx, "get", lambda *a, **k: httpx.Response(status, json={}))
+        problem = groq.key_problem("gsk_test")
+        assert expected in problem and bool(problem) == bool(expected)
+
+    def offline(*a, **k):
+        raise httpx.ConnectError("offline")
+
+    monkeypatch.setattr(groq.httpx, "get", offline)
+    assert "reach" in groq.key_problem("gsk_test")

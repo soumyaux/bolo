@@ -57,3 +57,16 @@ def test_save_keeps_hand_edits(files):
     config.save({("cleanup", "model"): "x"}, user)
     saved = tomllib.loads(user.read_text())
     assert saved["extra"]["mine"] == 1 and saved["cleanup"] == {"model": "x", "enabled": False}
+
+
+def test_save_key_replaces_only_that_key_and_is_private(tmp_path, monkeypatch):
+    env = tmp_path / "bolo" / ".env"
+    monkeypatch.setattr(config, "USER_DIR", env.parent)
+    monkeypatch.setattr(config, "ENV", env)
+    monkeypatch.setenv("TEST_KEY", "old")
+    env.parent.mkdir()
+    env.write_text("OTHER=1\nTEST_KEY=old\n")
+    config.save_key("TEST_KEY", " new\n")
+    assert env.read_text() == "OTHER=1\nTEST_KEY=new\n"
+    assert env.stat().st_mode & 0o777 == 0o600
+    assert config.key("TEST_KEY") == "new"

@@ -9,6 +9,7 @@ skips the TLS handshake.
 
 import json
 import logging
+import re
 import socket
 import threading
 import time
@@ -133,6 +134,25 @@ class Budget:
             return max(
                 self._counted(now, window, kind) / limit for window, limit, kind, _ in _LIMITS if window == 86_400
             )
+
+
+def key_problem(key: str) -> str:
+    """Asks Groq whether this key works. "" when it does, otherwise what to tell the user."""
+    key = key.strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", key):
+        return "That does not look like a Groq key. Copy it again."
+    try:
+        response = httpx.get(f"{_BASE}/models", headers={"Authorization": f"Bearer {key}"}, timeout=6)
+    except httpx.HTTPError:
+        return "Could not reach Groq. Check the internet or VPN and try again."
+    if blocked_by_network(response):
+        return "This network blocks Groq. Try another network."
+    if response.status_code in (401, 403):
+        return "Groq did not accept this key."
+    # A 429 comes after the key was accepted.
+    if response.status_code >= 400 and response.status_code != 429:
+        return f"Groq answered with an error ({response.status_code}). Try again."
+    return ""
 
 
 class GroqWhisper:

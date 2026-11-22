@@ -54,7 +54,7 @@ keep_hours = 24
 
 [stt]
 # Tried in order. A failure, a 429 or a timeout moves to the next one.
-# "groq" is Whisper large-v3 on Groq's free tier (needs GROQ_API_KEY in .env); it is checked every
+# "groq" is Whisper large-v3 on Groq's free tier (add your key in Settings › Speech); it is checked every
 # 30 s and on network changes, and skipped at once while it cannot be reached (offline, web filter).
 # "local" runs on this Mac: fast, no limit, no internet.
 order = ["groq", "local"]

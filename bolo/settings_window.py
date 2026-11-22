@@ -1,5 +1,6 @@
 """The settings window, opened from the menu bar. It edits config.toml through config.save()."""
 
+import threading
 from collections.abc import Callable
 
 import objc
@@ -17,6 +18,7 @@ from AppKit import (
     NSPanel,
     NSPopUpButton,
     NSScrollView,
+    NSSecureTextField,
     NSSegmentedControl,
     NSSlider,
     NSSound,
@@ -31,10 +33,12 @@ from AppKit import (
     NSWindowStyleMaskTitled,
     NSWorkspace,
 )
-from Foundation import NSMakeRect
+from Foundation import NSURL, NSMakeRect
+from PyObjCTools import AppHelper
 
 from . import audio, config, sounds
 from .learn.fix_window import _install_edit_menu
+from .stt.groq import key_problem
 from .styles import STYLES
 
 _WIDTH, _HEIGHT, _MARGIN = 620, 610, 20
@@ -46,7 +50,13 @@ _NO_SOUND = "None"
 _DEFAULT_MIC = "Mac default"
 # (local languages, Groq language, name shown).
 LANGUAGES = [(["en"], "en", "English"), (["en", "hi"], "", "English + Hindi")]
-ENGINES = [(["groq", "local"], "Groq online, this Mac when offline"), (["local"], "This Mac only (offline, works on VPN)")]
+# The switch in Settings › Speech: (engine order, name shown).
+MODES = [(["local"], "Local"), (["groq", "local"], "AI")]
+_MODE_NOTES = (
+    "Speech stays on this Mac. Works offline and on a VPN.",
+    "Speech goes to Groq with your own free key. This Mac takes over when Groq is out of reach.",
+)
+_GROQ_KEYS_URL = "https://console.groq.com/keys"
 
 
 def app_name(key: str) -> str:
@@ -114,6 +124,15 @@ class _Actions(NSObject):
     def restart_(self, sender):
         self.window.restart()
 
+    def modeChanged_(self, sender):
+        self.window.show_mode()
+
+    def getKey_(self, sender):
+        NSWorkspace.sharedWorkspace().openURL_(NSURL.URLWithString_(_GROQ_KEYS_URL))
+
+    def testKey_(self, sender):
+        self.window.test_key()
+
     def soundChosen_(self, sender):
         self.window.preview(sender)
 
@@ -122,8 +141,10 @@ class SettingsWindow:
     """Call show(cfg) on the main thread. on_save(changes) gets {("section", "key"): value}; it raises
     ValueError with a message for the window when the changes cannot be saved."""
 
-    def __init__(self, on_save: Callable[[dict], None], on_restart: Callable[[], None] | None = None):
+    def __init__(self, on_save: Callable[[dict], None], on_restart: Callable[[], None] | None = None,
+                 on_key_saved: Callable[[], None] | None = None):
         self._on_save = on_save
+        self._on_key_saved = on_key_saved
         self._on_restart = on_restart
         self._panel = None
         self._cfg: dict = {}
@@ -229,11 +250,32 @@ class SettingsWindow:
         note.setTextColor_(NSColor.secondaryLabelColor())
         view.addSubview_(note)
         y -= _ROW + 26
-        self._label(view, "Speech engine", y)
-        self._engine = self._popup(view, [name for _, name in ENGINES], y, width=300)
-        y -= _ROW + 8
         self._label(view, "Writing the text", y)
         self._animate = self._check(view, "Type it word by word into the text box", y)
+        y -= _ROW + 8
+        self._label(view, "Speech runs on", y)
+        self._mode = NSSegmentedControl.segmentedControlWithLabels_trackingMode_target_action_(
+            [name for _, name in MODES], 0, self._actions, "modeChanged:"
+        )
+        self._mode.setFrame_(NSMakeRect(_MARGIN + _LABEL, y, 160, 26))
+        view.addSubview_(self._mode)
+        self._mode_note = self._note(view, _MARGIN + _LABEL, y - 38, 320, 34)
+        y -= 76
+        self._key_label = self._label(view, "Groq API key", y)
+        self._key_field = NSSecureTextField.alloc().initWithFrame_(NSMakeRect(_MARGIN + _LABEL, y + 1, 320, 24))
+        view.addSubview_(self._key_field)
+        y -= 36
+        self._get_key = self._button(view, "Get a free key", "getKey:", NSMakeRect(_MARGIN + _LABEL - 4, y, 136, 30))
+        self._test_key = self._button(view, "Test and save", "testKey:", NSMakeRect(_MARGIN + _LABEL + 136, y, 136, 30))
+        self._key_note = self._note(view, _MARGIN + _LABEL, y - 36, 320, 34)
+
+    def _note(self, view, x: float, y: float, width: float, height: float):
+        note = NSTextField.wrappingLabelWithString_("")
+        note.setFrame_(NSMakeRect(x, y, width, height))
+        note.setFont_(NSFont.systemFontOfSize_(11))
+        note.setTextColor_(NSColor.secondaryLabelColor())
+        view.addSubview_(note)
+        return note
 
     def _dictionary(self, view, top: float) -> None:
         half = (_WIDTH - 2 * _MARGIN - 40 - 16) / 2
@@ -390,11 +432,11 @@ class SettingsWindow:
         self._choose(self._language, next((name for langs, _, name in LANGUAGES if langs == languages), LANGUAGES[0][2]))
         order = cfg.get("stt", {}).get("order", ["local"])
         has_key = bool(config.key("GROQ_API_KEY"))
-        self._engine.setAutoenablesItems_(False)
-        self._engine.itemAtIndex_(0).setEnabled_(has_key)
-        if not has_key:
-            self._engine.itemAtIndex_(0).setTitle_(ENGINES[0][1] + " (needs a Groq key)")
-        self._engine.selectItemAtIndex_(0 if has_key and "groq" in order else 1)
+        self._mode.setSelectedSegment_(1 if has_key and "groq" in order else 0)
+        self._key_field.setStringValue_("")
+        self._test_key.setEnabled_(True)
+        self._show_key_state()
+        self.show_mode()
         self._animate.setState_(get("typing", "animate", True))
         self._terms.setString_("\n".join(get("dictionary", "terms", [])))
         self._hints.setString_("\n".join(get("dictionary", "hints", [])))
@@ -449,6 +491,11 @@ class SettingsWindow:
         talk, prompt_key = self._key(self._talk), self._key(self._prompt_key)
         if prompt_key and prompt_key == talk:
             raise ValueError("The prompt-mode key must differ from the talk key.")
+        ai = self._mode.selectedSegment() == 1
+        if ai and str(self._key_field.stringValue()).strip():
+            raise ValueError("Press Test and save for the new key first.")
+        if ai and not config.key("GROQ_API_KEY"):
+            raise ValueError("AI needs a Groq key. Paste one and press Test and save.")
         self._read_styles()
         lines = lambda box: [line.strip() for line in str(box.string()).splitlines() if line.strip()]  # noqa: E731
         sound = lambda kind: "" if (t := str(self._sound_popups[kind].titleOfSelectedItem())) == _NO_SOUND else t  # noqa: E731
@@ -460,7 +507,7 @@ class SettingsWindow:
             ("audio", "microphone"): "" if mic == _DEFAULT_MIC else mic,
             ("stt", "local", "languages"): local,
             ("stt", "groq", "language"): groq,
-            ("stt", "order"): ENGINES[self._engine.indexOfSelectedItem()][0],
+            ("stt", "order"): MODES[self._mode.selectedSegment()][0],
             ("typing", "animate"): bool(self._animate.state()),
             ("hotkey", "push_to_talk"): talk,
             ("audio", "hands_free"): bool(self._hands_free.state()),
@@ -488,6 +535,50 @@ class SettingsWindow:
         }
 
     # Actions
+
+    def show_mode(self) -> None:
+        mode = self._mode.selectedSegment()
+        self._mode_note.setStringValue_(_MODE_NOTES[mode])
+        for view in (self._key_label, self._key_field, self._get_key, self._test_key, self._key_note):
+            view.setHidden_(mode == 0)
+
+    def _show_key_state(self) -> None:
+        has_key = bool(config.key("GROQ_API_KEY"))
+        self._key_field.setPlaceholderString_("Saved. Paste a new key to replace it" if has_key else "Paste your key here")
+        self._key_note.setTextColor_(NSColor.secondaryLabelColor())
+        self._key_note.setStringValue_("Saved on this Mac, readable by you only." if has_key else "Free, no card needed.")
+
+    def test_key(self) -> None:
+        key = str(self._key_field.stringValue()).strip()
+        if not key:
+            self._key_note.setTextColor_(NSColor.systemRedColor())
+            self._key_note.setStringValue_("Paste your key first.")
+            return
+        self._test_key.setEnabled_(False)
+        self._key_note.setTextColor_(NSColor.secondaryLabelColor())
+        self._key_note.setStringValue_("Testing…")
+        threading.Thread(target=lambda: self._tested(key, key_problem(key)), daemon=True, name="groq-key-test").start()
+
+    def _tested(self, key: str, problem: str) -> None:
+        if not problem:
+            try:
+                config.save_key("GROQ_API_KEY", key)
+            except OSError:
+                problem = "The key could not be saved on this Mac."
+        AppHelper.callAfter(self._show_tested, problem)
+
+    def _show_tested(self, problem: str) -> None:
+        self._test_key.setEnabled_(True)
+        if problem:
+            self._key_note.setTextColor_(NSColor.systemRedColor())
+            self._key_note.setStringValue_(problem)
+            return
+        self._key_field.setStringValue_("")
+        self._show_key_state()
+        self._key_note.setTextColor_(NSColor.systemGreenColor())
+        self._key_note.setStringValue_("Key works and is saved. Press Save to use AI.")
+        if self._on_key_saved:
+            self._on_key_saved()
 
     def preview(self, popup) -> None:
         title = str(popup.titleOfSelectedItem())

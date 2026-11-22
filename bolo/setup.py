@@ -33,14 +33,7 @@ def set_value(key: str, value: str) -> None:
 
 
 def groq_key(key: str) -> None:
-    config.USER_DIR.mkdir(parents=True, exist_ok=True)
-    lines = [
-        line
-        for line in (config.ENV.read_text().splitlines() if config.ENV.exists() else [])
-        if not line.startswith("GROQ_API_KEY=")
-    ]
-    config.ENV.write_text("\n".join(lines + [f"GROQ_API_KEY={key.strip()}"]) + "\n")
-    config.ENV.chmod(0o600)
+    config.save_key("GROQ_API_KEY", key)
     print(f"Groq key saved in {config.ENV}")
 
 

@@ -254,6 +254,7 @@ class BoloApp(rumps.App):
             cfg["audio"]["sample_rate"], cfg["audio"]["max_seconds"], cfg["audio"].get("microphone", "")
         )
         self.chain = Chain(build_providers(cfg))
+        self._groq_key = config.key("GROQ_API_KEY")
         self.cleaner = Cleaner(cfg, self._cleanup_status)
         learning = cfg["learning"]
         self.learning = Learning(learning["enabled"])
@@ -263,7 +264,7 @@ class BoloApp(rumps.App):
             self.voice.prune()
         self.voice_line.hidden = self.voice is None
         self.fix_window = FixWindow(self._fix_saved)
-        self.settings_window = SettingsWindow(self._save_settings, self._restart)
+        self.settings_window = SettingsWindow(self._save_settings, self._restart, self._key_saved)
         self.watcher = Watcher(self._learn) if learning["enabled"] and learning["auto_capture"] else None
         self.pending = Pending(LEARNING_DB.parent / "pending", cfg["recovery"]["keep_hours"])
         # Shortcut (key code, modifiers) -> what it does. Both run on the main thread.
@@ -586,11 +587,17 @@ class BoloApp(rumps.App):
         log.info("settings saved")
         self._pill("message", "Settings saved")
 
+    def _key_saved(self) -> None:
+        """Main thread. A new Groq key is used from the next dictation."""
+        self._apply_settings(config.load())
+
     def _apply_settings(self, cfg: dict) -> None:
         """Uses new settings without a restart. Keys, hands-free, mute, styles and prompt mode are
         read from self.cfg each time; the rest is rebuilt here."""
-        if cfg["stt"] != self.cfg["stt"]:
-            # A new engine order or language: the old providers are let go and new ones made.
+        groq_key = config.key("GROQ_API_KEY")
+        if cfg["stt"] != self.cfg["stt"] or groq_key != self._groq_key:
+            # A new engine order, language or key: the old providers are let go and new ones made.
+            self._groq_key = groq_key
             old = {provider.name: provider for provider in self.chain.providers}
             providers = build_providers(cfg)
             local = old.get("local")

@@ -53,6 +53,19 @@ def key(name: str) -> str | None:
     return value or None
 
 
+def save_key(name: str, value: str) -> None:
+    """Saves an API key in the user's .env, readable by them only, and uses it from now on."""
+    value = value.strip()
+    USER_DIR.mkdir(parents=True, exist_ok=True)
+    lines = [line for line in (ENV.read_text().splitlines() if ENV.exists() else []) if not line.startswith(f"{name}=")]
+    part = ENV.with_name(ENV.name + ".saving")
+    part.unlink(missing_ok=True)
+    with os.fdopen(os.open(part, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
+        f.write("\n".join(lines + [f"{name}={value}"]) + "\n")
+    os.replace(part, ENV)
+    os.environ[name] = value
+
+
 def _plain(item):
     return item.unwrap() if hasattr(item, "unwrap") else item
 

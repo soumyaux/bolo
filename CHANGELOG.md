@@ -5,6 +5,7 @@
 **After updating:** macOS asks you one last time to allow Bolo again (Microphone, Accessibility, Input Monitoring), because Bolo.app is now signed with its own certificate. After this, updates keep the permissions.
 
 - The installer creates a private "Bolo Local Signing" certificate in your login keychain (no admin password needed), so updates no longer reset macOS permissions.
+- Settings › Speech has one Local / AI switch. For AI, get a free Groq key, paste it, and test it right there, with no file to edit or restart.
 
 ## 1.0.0 (2026-11-22)
 
