@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.1.0 (2026-11-23)
 
 **After updating:** macOS asks you one last time to allow Bolo again (Microphone, Accessibility, Input Monitoring), because Bolo.app is now signed with its own certificate. After this, updates keep the permissions.
 
